@@ -6,11 +6,8 @@ let showDisabled = false;
 // 初期化
 document.addEventListener('DOMContentLoaded', async () => {
   showStatus('データを読み込んでいます...');
-  try {
-    // サーバはJSON文字列を返す（オブジェクト直列化でnullになる事故を避けるため）
-    const res = parseServerResult(await callServer('getAppData'));
-    if (!res.ok) throw new Error(res.message);
-
+  const res = await callServer('getAppData');
+  if (res.ok) {
     appData = res.data;
     // パラメータをマップ化（計算用）
     appData.params.forEach(p => paramMap[p['パラメータID']] = p['値']);
@@ -76,15 +73,8 @@ function renderTable() {
                      <td><button class="btn-small add-detail-btn" data-work-id="${work['作業ID']}">+ 内訳追加</button></td>`;
     tbody.appendChild(trW);
 
-    trW.querySelector('.add-btn').addEventListener('click', () => addWorkDetailRow(work['作業ID'], null));
-
     // その作業に紐づく内訳
-    let details = validDetails.filter(d => d['作業ID'] === work['作業ID']).sort((a,b) => a['順序'] - b['順序']);
-    
-    // 作業名でヒットしていない場合は、内訳名でヒットしたものだけに絞る
-    if (kw && !String(work['作業名']).toLowerCase().includes(kw)) {
-      details = details.filter(d => String(d['作業内訳名']).toLowerCase().includes(kw) || String(d['内訳ID']).toLowerCase().includes(kw));
-    }
+    const details = validDetails.filter(d => d['作業ID'] === work['作業ID']).sort((a,b) => a['順序'] - b['順序']);
     
     details.forEach(detail => {
       const isDisabled = detail['状態'] === '無効';
@@ -271,7 +261,6 @@ async function saveRowData(tr, newRow, baseDetail, isRemove, isAdd = false, isRe
     tr.querySelector('.save-btn').textContent = '競合';
     tr.classList.add('conflict');
   } else {
-    showStatus('保存に失敗しました: ' + res.message, true);
     tr.querySelector('.save-btn').textContent = '保存';
     tr.querySelector('.save-btn').disabled = false;
   }

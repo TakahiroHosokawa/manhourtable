@@ -10,22 +10,9 @@ function doGet(e) {
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
 }
 
-// 共通：スプレッドシートを開く（IDの未設定・誤りをその場で切り分ける）
-function openSpreadsheet_() {
-  const id = PropertiesService.getScriptProperties().getProperty('SPREADSHEET_ID');
-  if (!id) {
-    throw new Error('スクリプトプロパティ「SPREADSHEET_ID」が未設定です。');
-  }
-  try {
-    return SpreadsheetApp.openById(id);
-  } catch (e) {
-    throw new Error('SPREADSHEET_ID「' + id + '」でスプレッドシートを開けません: ' + e.message);
-  }
-}
-
 // 共通：シートデータをオブジェクト配列として取得
-// ※ Dateなど直列化できない値は文字列へ寄せる
-function getTableData_(ss, sheetName) {
+function getTableData_(sheetName) {
+  const ss = SpreadsheetApp.openById(PropertiesService.getScriptProperties().getProperty('SPREADSHEET_ID'));
   const sheet = ss.getSheetByName(sheetName);
   if (!sheet) return [];
   const data = sheet.getDataRange().getValues();
@@ -42,7 +29,6 @@ function getTableData_(ss, sheetName) {
 }
 
 // クライアントへ初期データを送る
-// google.script.run のオブジェクト直列化で null になる事故を避けるため JSON文字列で返す
 function getAppData() {
   try {
     const currentProductId = PropertiesService.getUserProperties().getProperty('CURRENT_PRODUCT_ID') || 'P-001';
@@ -82,7 +68,7 @@ function saveWorkDetail(newRow, baseRow) {
   const lock = LockService.getScriptLock();
   try {
     lock.waitLock(20000); // 20秒待ち
-    const ss = openSpreadsheet_();
+    const ss = SpreadsheetApp.openById(PropertiesService.getScriptProperties().getProperty('SPREADSHEET_ID'));
     const sheet = ss.getSheetByName(SHEET_NAMES.WORK_DETAIL);
     const data = sheet.getDataRange().getValues();
     const headers = data[0];
