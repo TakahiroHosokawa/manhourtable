@@ -99,7 +99,7 @@ function renderTable(keyword = '') {
     
     // 作業名でヒットしていない場合は、内訳名でヒットしたものだけに絞る
     if (kw && !String(work['作業名']).toLowerCase().includes(kw)) {
-      details = details.filter(d => String(d['作業内訳名']).toLowerCase().includes(kw));
+      details = details.filter(d => String(d['作業内訳名']).toLowerCase().includes(kw) || String(d['内訳ID']).toLowerCase().includes(kw));
     }
     
     details.forEach(detail => {
@@ -111,9 +111,15 @@ function renderTable(keyword = '') {
       // 基準値として編集開始時のデータをJSONで保持
       trD.dataset.baseRow = JSON.stringify(detail);
       
+      // 確度の表示文字と色
+      let accLabel = '未';
+      let accColor = '#e0e0e0';
+      if (detail['確度'] === '確定') { accLabel = '確'; accColor = '#81c784'; }
+      else if (detail['確度'] === '暫定') { accLabel = '暫'; accColor = '#ffd54f'; }
+
       // 編集可能項目を input で生成
       trD.innerHTML = `
-        <td></td>
+        <td><span style="display:inline-block; width:1.5em; height:1.5em; line-height:1.5em; text-align:center; background-color:${accColor}; border-radius:50%; font-size:0.8em;" title="${detail['確度']||'未観測'}">${accLabel}</span></td>
         <td><input type="number" name="順序" value="${detail['順序']}" class="edit-input" style="width:40px;"></td>
         <td><input type="text" name="作業内訳名" value="${detail['作業内訳名']}" class="edit-input long"></td>
         <td>
@@ -135,6 +141,7 @@ function renderTable(keyword = '') {
           <select name="数量方式" class="edit-input">
             <option ${detail['数量方式']=='固定'?'selected':''}>固定</option>
             <option ${detail['数量方式']=='パラメータ'?'selected':''}>パラメータ</option>
+            <option ${detail['数量方式']=='部品の使用数'?'selected':''}>部品の使用数</option>
           </select>
         </td>
         <td><input type="number" name="固定数量" value="${detail['固定数量']}" class="edit-input"></td>
@@ -142,8 +149,9 @@ function renderTable(keyword = '') {
         <td class="calc-duration">${formatMin(calc.current.durationSec)}</td>
         <td class="calc-work">${formatMin(calc.current.workSec)}</td>
         <td style="white-space: nowrap;">
+          <button class="btn-small parts-btn" title="部品の紐付け"><span style="font-size: 1.2em;">🔗</span></button>
+          <button class="btn-small copy-btn" title="複製"><span style="font-size: 1.2em;">📋</span></button>
           <button class="btn-small save-btn" disabled>保存</button>
-          <button class="btn-small copy-btn">複製</button>
           <button class="btn-small disable-btn">無効</button>
         </td>
       `;
@@ -170,6 +178,9 @@ function renderTable(keyword = '') {
       
       // 複製ボタン
       trD.querySelector('.copy-btn').addEventListener('click', () => addWorkDetailRow(work['作業ID'], detail));
+
+      // 部品ボタン
+      trD.querySelector('.parts-btn').addEventListener('click', () => openPartsDialog(detail['内訳ID'], detail['作業内訳名']));
 
       // 無効化ボタン (F01)
       trD.querySelector('.disable-btn').addEventListener('click', () => {
@@ -258,5 +269,142 @@ async function addWorkDetailRow(workId, copySourceDetail) {
     alert('エラー: ' + res.message);
     showStatus('エラー発生');
   }
+}
+
+// 部品の紐付けダイアログを開く
+function openPartsDialog(detailId, detailName) {
+  // すでにダイアログがあれば削除
+  let existingModal = document.getElementById('parts-modal');
+  if (existingModal) existingModal.remove();
+
+  // 現在の内訳に紐づく使用部品を取得
+  let usedParts = appData.usedParts.filter(up => up['内訳ID'] === detailId && up['状態'] !== '無効');
+  
+  // HTML組み立て
+  const modalHtml = `
+    <div id="parts-modal" class="modal-overlay">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h3>部品の紐付け: ${detailName}</h3>
+          <button class="modal-close" onclick="document.getElementById('parts-modal').remove()">×</button>
+        </div>
+        <div>
+          <table class="modal-table" id="used-parts-table">
+            <thead>
+              <tr>
+                <th>品番</th>
+                <th>品名</th>
+                <th>使用数</th>
+                <th>数量基準</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${usedParts.map(up => {
+                const part = appData.parts.find(p => p['品番'] === up['品番']) || { '品名': '不明' };
+                return `
+                  <tr data-part-id="${up['品番']}">
+                    <td>${up['品番']}</td>
+                    <td>${part['品名']}</td>
+                    <td><input type="number" value="${up['使用数']}" style="width:40px;" class="used-qty-input"></td>
+                    <td style="text-align:center;"><input type="radio" name="qty_base" value="${up['品番']}" ${up['数量基準'] ? 'checked' : ''}></td>
+                    <td><button class="btn-small remove-part-btn">削除</button></td>
+                  </tr>
+                `;
+              }).join('')}
+            </tbody>
+          </table>
+          <div style="margin-top: 10px;">
+            <input type="text" id="add-part-input" placeholder="品番を入力">
+            <button id="add-part-btn">追加</button>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button id="save-parts-btn">保存</button>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.insertAdjacentHTML('beforeend', modalHtml);
+
+  // 追加ボタンのイベント
+  document.getElementById('add-part-btn').addEventListener('click', () => {
+    const partId = document.getElementById('add-part-input').value.trim();
+    if (!partId) return;
+    
+    const part = appData.parts.find(p => p['品番'] === partId);
+    if (!part) {
+      alert('存在しない品番です: ' + partId);
+      return;
+    }
+    
+    // 既にあるかチェック
+    const tbody = document.querySelector('#used-parts-table tbody');
+    if (tbody.querySelector(`tr[data-part-id="${partId}"]`)) {
+      alert('既に追加されています');
+      return;
+    }
+
+    const tr = document.createElement('tr');
+    tr.dataset.partId = partId;
+    tr.innerHTML = `
+      <td>${partId}</td>
+      <td>${part['品名']}</td>
+      <td><input type="number" value="1" style="width:40px;" class="used-qty-input"></td>
+      <td style="text-align:center;"><input type="radio" name="qty_base" value="${partId}"></td>
+      <td><button class="btn-small remove-part-btn">削除</button></td>
+    `;
+    tbody.appendChild(tr);
+    document.getElementById('add-part-input').value = '';
+  });
+
+  // テーブル内のイベント（削除）
+  document.getElementById('used-parts-table').addEventListener('click', (e) => {
+    if (e.target.classList.contains('remove-part-btn')) {
+      e.target.closest('tr').remove();
+    }
+  });
+
+  // 保存ボタンのイベント
+  document.getElementById('save-parts-btn').addEventListener('click', async () => {
+    const rows = document.querySelectorAll('#used-parts-table tbody tr');
+    const newUsedParts = [];
+    rows.forEach(tr => {
+      newUsedParts.push({
+        '内訳ID': detailId,
+        '品番': tr.dataset.partId,
+        '使用数': Number(tr.querySelector('.used-qty-input').value) || 1,
+        '数量基準': tr.querySelector('input[name="qty_base"]').checked
+      });
+    });
+
+    // 複数チェックや0件チェックなどのバリデーション（簡易）
+    const bases = newUsedParts.filter(up => up['数量基準']);
+    if (bases.length > 1) {
+      alert('数量基準は1つしか選べません。');
+      return;
+    }
+
+    showStatus('部品を保存中...');
+    const saveBtn = document.getElementById('save-parts-btn');
+    saveBtn.disabled = true;
+    try {
+      const res = parseServerResult(await callServer('saveUsedParts', detailId, newUsedParts));
+      if (!res.ok) throw new Error(res.message);
+      
+      // 成功したらクライアントのデータを更新して閉じる
+      appData.usedParts = appData.usedParts.filter(up => up['内訳ID'] !== detailId);
+      appData.usedParts.push(...newUsedParts);
+      document.getElementById('parts-modal').remove();
+      showStatus('部品を保存しました');
+    } catch (err) {
+      alert('保存失敗: ' + err.message);
+      // DOMツリーから消えていない場合のみdisabledを解除する (モーダルが閉じていない場合)
+      if (document.getElementById('save-parts-btn')) {
+        document.getElementById('save-parts-btn').disabled = false;
+      }
+      showStatus('エラー発生', true);
+    }
+  });
 }
 </script>

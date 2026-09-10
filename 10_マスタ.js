@@ -48,18 +48,21 @@ function getTableData_(ss, sheetName) {
 function getAppData() {
   try {
     const ss = openSpreadsheet_();
-    const product = getTableData_(ss, SHEET_NAMES.PRODUCT)[0]; // 今回は単一製品前提
-    if (!product) {
-      throw new Error('「' + SHEET_NAMES.PRODUCT + '」シートにデータ行がありません。initSpreadsheet() を実行してください。');
-    }
+    const products = getTableData_(ss, SHEET_NAMES.PRODUCT);
+    const product = products.length > 0 ? products[0] : null;
+    
     const data = {
-      product: product,
+      products: products, // 複数型式対応
+      product: product,   // 互換性のため
       params: getTableData_(ss, SHEET_NAMES.PARAM),
       processes: getTableData_(ss, SHEET_NAMES.PROCESS),
       groups: getTableData_(ss, SHEET_NAMES.GROUP),
       works: getTableData_(ss, SHEET_NAMES.WORK),
       details: getTableData_(ss, SHEET_NAMES.WORK_DETAIL),
-      choices: getTableData_(ss, SHEET_NAMES.CHOICE)
+      choices: getTableData_(ss, SHEET_NAMES.CHOICE),
+      parts: getTableData_(ss, SHEET_NAMES.PART),
+      productParts: getTableData_(ss, SHEET_NAMES.PRODUCT_PART),
+      usedParts: getTableData_(ss, SHEET_NAMES.USED_PART)
     };
     return JSON.stringify({ ok: true, data: data });
   } catch (e) {
@@ -149,6 +152,61 @@ function saveWorkDetail(newRow, baseRow) {
     // (※本来はここで40_履歴.gsを呼んで履歴を記録しますが、段階的に後ほど実装します)
 
     return JSON.stringify({ ok: true, message: '保存しました' });
+
+  } catch (e) {
+    return JSON.stringify({ ok: false, message: e.message || String(e) });
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// 使用部品の保存
+function saveUsedParts(detailId, newUsedParts) {
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(20000);
+    const ss = openSpreadsheet_();
+    const sheet = ss.getSheetByName(SHEET_NAMES.USED_PART);
+    const data = sheet.getDataRange().getValues();
+    const headers = data[0];
+    const detailIdIndex = headers.indexOf('内訳ID');
+    const partIdIndex = headers.indexOf('品番');
+    
+    // 現在の使用部品を走査し、この内訳IDに関する行を見つける
+    const now = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd HH:mm:ss');
+    const user = Session.getActiveUser().getEmail();
+
+    // 一旦、対象の内訳IDの既存行を無効にするか削除する
+    // V0.5仕様に従い、物理削除は避けて無効化もできますが、中間テーブルなので物理削除または書き換えで対応
+    // ここでは単純化のため、全消し＆追加という更新ロジックにするか、行削除にします。
+    // 中間テーブルなので行ごと削除（削除フラグ運用よりシンプル）
+    // 逆順で削除
+    for (let i = data.length - 1; i >= 1; i--) {
+      if (data[i][detailIdIndex] === detailId) {
+        sheet.deleteRow(i + 1);
+      }
+    }
+
+    // 新しいレコードを追加
+    if (newUsedParts && newUsedParts.length > 0) {
+      const appendRows = newUsedParts.map(up => {
+        const row = [];
+        headers.forEach(h => {
+          if (h === '内訳ID') row.push(detailId);
+          else if (h === '品番') row.push(up['品番']);
+          else if (h === '使用数') row.push(up['使用数'] || 1);
+          else if (h === '数量基準') row.push(up['数量基準'] === true || up['数量基準'] === 'true');
+          else if (h === '作成日時' || h === '更新日時') row.push(now);
+          else if (h === '作成者' || h === '更新者') row.push(user);
+          else row.push(''); // その他
+        });
+        return row;
+      });
+      // 2次元配列を書き込み (appendRowより速い)
+      sheet.getRange(sheet.getLastRow() + 1, 1, appendRows.length, headers.length).setValues(appendRows);
+    }
+
+    return JSON.stringify({ ok: true, message: '使用部品を保存しました' });
 
   } catch (e) {
     return JSON.stringify({ ok: false, message: e.message || String(e) });
