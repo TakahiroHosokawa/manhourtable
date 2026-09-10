@@ -15,6 +15,12 @@
       <button class="tab-btn disabled">集計(S03)</button>
     </div>
 
+    <div id="filter-container" style="padding: 10px; background: #f9f9f9; border-bottom: 1px solid #ddd;">
+      <label>絞り込み: <input type="text" id="filter-keyword" placeholder="作業名、内訳名など"></label>
+      <button id="filter-btn" class="btn-small">検索</button>
+      <button id="filter-clear-btn" class="btn-small">クリア</button>
+    </div>
+
     <div id="app-content">
       <!-- js_工数表.html でテーブルを描画します -->
       <table id="works-table">

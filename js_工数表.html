@@ -5,40 +5,102 @@ let paramMap = {};
 // 初期化
 document.addEventListener('DOMContentLoaded', async () => {
   showStatus('データを読み込んでいます...');
-  const res = await callServer('getAppData');
-  if (res.ok) {
+  try {
+    // サーバはJSON文字列を返す（オブジェクト直列化でnullになる事故を避けるため）
+    const res = parseServerResult(await callServer('getAppData'));
+    if (!res.ok) throw new Error(res.message);
+
     appData = res.data;
     // パラメータをマップ化（計算用）
     appData.params.forEach(p => paramMap[p['パラメータID']] = p['値']);
     renderTable();
     showStatus('読み込み完了');
+    if (appData.works.length === 0) {
+      showLoadError('作業データが0件です。スプレッドシートの「作業」「作業内訳」シートにデータがあるか、initSpreadsheet() を実行済みか確認してください。');
+    }
+  } catch (err) {
+    // callServer は失敗時 {ok:false, message} または Error を reject する
+    const msg = (err && err.message) ? err.message : JSON.stringify(err);
+    console.error('getAppData failed:', err);
+    showLoadError(msg);
   }
+
+  // 絞り込みイベント
+  document.getElementById('filter-btn').addEventListener('click', () => {
+    renderTable(document.getElementById('filter-keyword').value);
+  });
+  document.getElementById('filter-clear-btn').addEventListener('click', () => {
+    document.getElementById('filter-keyword').value = '';
+    renderTable();
+  });
+  document.getElementById('filter-keyword').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      renderTable(document.getElementById('filter-keyword').value);
+    }
+  });
 });
 
+// サーバ応答(JSON文字列)を解釈する
+function parseServerResult(raw) {
+  if (raw === null || raw === undefined) {
+    throw new Error('サーバから応答がありません(null)。デプロイが古い可能性があります。');
+  }
+  return (typeof raw === 'string') ? JSON.parse(raw) : raw;
+}
+
+// 読込失敗時にエラーを表領域へ大きく表示
+function showLoadError(msg) {
+  const el = document.getElementById('app-content');
+  el.innerHTML = `<div style="color:#c62828; background:#ffebee; border:1px solid #c62828; padding:16px; font-size:14px;">
+    <b>データの読み込みに失敗しました</b><br><br>
+    <code style="white-space:pre-wrap;">${msg}</code><br><br>
+    確認事項: スクリプトプロパティ SPREADSHEET_ID / シートの存在 / 実行ユーザのアクセス権
+  </div>`;
+}
+
 // テーブル描画
-function renderTable() {
-  const thead = document.querySelector('#works-table.thead');
+function renderTable(keyword = '') {
+  const thead = document.querySelector('#works-table thead');
   const tbody = document.querySelector('#works-table tbody');
   
   // 表示項目を絞った簡易版ヘッダ
   const cols = ['作業名', '順序', '作業内訳名', '区分', '時間方式', '正味時間(現)', '数量方式', '固定数量', '人数(現)', '所要(分)', '工数(人・分)', '操作'];
-  document.querySelector('#works-table thead').innerHTML = `<tr>${cols.map(c => `<th>${c}</th>`).join('')}</tr>`;
+  thead.innerHTML = `<tr>${cols.map(c => `<th>${c}</th>`).join('')}</tr>`;
   
   tbody.innerHTML = '';
   
+  const kw = keyword.toLowerCase().trim();
+
   // 状態が有効なものだけ抽出して表示
   const validWorks = appData.works.filter(w => w['状態'] === '有効');
   const validDetails = appData.details.filter(d => d['状態'] === '有効');
 
-  validWorks.forEach(work => {
+  let filteredWorks = validWorks;
+  if (kw) {
+    filteredWorks = validWorks.filter(work => {
+      const workMatch = String(work['作業名']).toLowerCase().includes(kw);
+      const detailMatch = validDetails.some(d => d['作業ID'] === work['作業ID'] && String(d['作業内訳名']).toLowerCase().includes(kw));
+      return workMatch || detailMatch;
+    });
+  }
+
+  filteredWorks.forEach(work => {
     // 作業（親）の行
     const trW = document.createElement('tr');
     trW.style.backgroundColor = '#e8f5e9';
-    trW.innerHTML = `<td colspan="${cols.length}"><b>${work['作業名']}</b> (作業ID: ${work['作業ID']})</td>`;
+    trW.innerHTML = `<td colspan="${cols.length - 1}"><b>${work['作業名']}</b> (作業ID: ${work['作業ID']})</td>
+                     <td style="text-align: center;"><button class="btn-small add-btn">追加</button></td>`;
     tbody.appendChild(trW);
 
+    trW.querySelector('.add-btn').addEventListener('click', () => addWorkDetailRow(work['作業ID'], null));
+
     // その作業に紐づく内訳
-    const details = validDetails.filter(d => d['作業ID'] === work['作業ID']).sort((a,b) => a['順序'] - b['順序']);
+    let details = validDetails.filter(d => d['作業ID'] === work['作業ID']).sort((a,b) => a['順序'] - b['順序']);
+    
+    // 作業名でヒットしていない場合は、内訳名でヒットしたものだけに絞る
+    if (kw && !String(work['作業名']).toLowerCase().includes(kw)) {
+      details = details.filter(d => String(d['作業内訳名']).toLowerCase().includes(kw));
+    }
     
     details.forEach(detail => {
       // 即時計算
@@ -79,9 +141,10 @@ function renderTable() {
         <td><input type="number" name="人数_現状" value="${detail['人数_現状']}" class="edit-input"></td>
         <td class="calc-duration">${formatMin(calc.current.durationSec)}</td>
         <td class="calc-work">${formatMin(calc.current.workSec)}</td>
-        <td>
+        <td style="white-space: nowrap;">
           <button class="btn-small save-btn" disabled>保存</button>
-          <button class="btn-small disable-btn">無効化</button>
+          <button class="btn-small copy-btn">複製</button>
+          <button class="btn-small disable-btn">無効</button>
         </td>
       `;
       tbody.appendChild(trD);
@@ -105,6 +168,9 @@ function renderTable() {
       // 保存ボタン
       trD.querySelector('.save-btn').addEventListener('click', () => saveRow(trD, detail));
       
+      // 複製ボタン
+      trD.querySelector('.copy-btn').addEventListener('click', () => addWorkDetailRow(work['作業ID'], detail));
+
       // 無効化ボタン (F01)
       trD.querySelector('.disable-btn').addEventListener('click', () => {
         if(confirm('この作業内訳を無効化しますか？')) {
@@ -135,8 +201,17 @@ async function saveRow(tr, baseDetail) {
 // サーバー通信
 async function saveRowData(tr, newRow, baseDetail, isRemove) {
   showStatus('保存中...');
-  const res = await callServer('saveWorkDetail', newRow, baseDetail);
-  
+  let res;
+  try {
+    res = parseServerResult(await callServer('saveWorkDetail', newRow, baseDetail));
+  } catch (err) {
+    const msg = (err && err.message) ? err.message : JSON.stringify(err);
+    showStatus('保存に失敗しました: ' + msg, true);
+    tr.querySelector('.save-btn').textContent = '保存';
+    tr.querySelector('.save-btn').disabled = false;
+    return;
+  }
+
   if (res.ok) {
     showStatus('保存完了');
     if (isRemove) {
@@ -155,8 +230,33 @@ async function saveRowData(tr, newRow, baseDetail, isRemove) {
     tr.querySelector('.save-btn').textContent = '競合';
     tr.classList.add('conflict');
   } else {
+    showStatus('保存に失敗しました: ' + res.message, true);
     tr.querySelector('.save-btn').textContent = '保存';
     tr.querySelector('.save-btn').disabled = false;
+  }
+}
+
+// サーバー通信 (追加/複製)
+async function addWorkDetailRow(workId, copySourceDetail) {
+  showStatus('追加中...');
+  let res;
+  try {
+    res = parseServerResult(await callServer('addWorkDetail', workId, copySourceDetail));
+  } catch (err) {
+    const msg = (err && err.message) ? err.message : JSON.stringify(err);
+    alert('追加に失敗しました: ' + msg);
+    showStatus('エラー発生', true);
+    return;
+  }
+
+  if (res.ok) {
+    showStatus('追加完了');
+    appData.details.push(res.row);
+    // 再描画
+    renderTable(document.getElementById('filter-keyword').value);
+  } else {
+    alert('エラー: ' + res.message);
+    showStatus('エラー発生');
   }
 }
 </script>
