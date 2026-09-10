@@ -17,11 +17,10 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 // テーブル描画
 function renderTable() {
-  const thead = document.querySelector('#works-table.thead');
   const tbody = document.querySelector('#works-table tbody');
   
   // 表示項目を絞った簡易版ヘッダ
-  const cols = ['作業名', '順序', '作業内訳名', '区分', '時間方式', '正味時間(現)', '数量方式', '固定数量', '人数(現)', '所要(分)', '工数(人・分)', '操作'];
+  const cols = ['作業名', '順序', '作業内訳名', '区分', '作業方式', '単位', '時間方式', '正味時間(現)', '数量方式', '固定数量', '人数(現)', '所要(分)', '工数(人・分)', '検証', '操作'];
   document.querySelector('#works-table thead').innerHTML = `<tr>${cols.map(c => `<th>${c}</th>`).join('')}</tr>`;
   
   tbody.innerHTML = '';
@@ -53,32 +52,18 @@ function renderTable() {
       trD.innerHTML = `
         <td></td>
         <td><input type="number" name="順序" value="${detail['順序']}" class="edit-input" style="width:40px;"></td>
-        <td><input type="text" name="作業内訳名" value="${detail['作業内訳名']}" class="edit-input long"></td>
-        <td>
-          <select name="区分" class="edit-input">
-            <option ${detail['区分']=='実作業'?'selected':''}>実作業</option>
-            <option ${detail['区分']=='手待ち'?'selected':''}>手待ち</option>
-            <option ${detail['区分']=='段取り'?'selected':''}>段取り</option>
-            <option ${detail['区分']=='間接作業'?'selected':''}>間接作業</option>
-          </select>
-        </td>
-        <td>
-          <select name="時間方式" class="edit-input">
-            <option ${detail['時間方式']=='分担作業'?'selected':''}>分担作業</option>
-            <option ${detail['時間方式']=='同時作業'?'selected':''}>同時作業</option>
-          </select>
-        </td>
+        <td><input type="text" name="作業内訳名" value="${escapeHtml(detail['作業内訳名'])}" class="edit-input long"></td>
+        <td>${buildSelect('区分', OPTIONS['区分'], detail['区分'])}</td>
+        <td>${buildSelect('作業方式', OPTIONS['作業方式'], detail['作業方式'])}</td>
+        <td>${buildSelect('単位', OPTIONS['単位'], detail['単位'])}</td>
+        <td>${buildSelect('時間方式', OPTIONS['時間方式'], detail['時間方式'])}</td>
         <td><input type="number" name="正味時間_現状" value="${detail['正味時間_現状']}" class="edit-input" step="0.1"></td>
-        <td>
-          <select name="数量方式" class="edit-input">
-            <option ${detail['数量方式']=='固定'?'selected':''}>固定</option>
-            <option ${detail['数量方式']=='パラメータ'?'selected':''}>パラメータ</option>
-          </select>
-        </td>
+        <td>${buildSelect('数量方式', OPTIONS['数量方式'], detail['数量方式'])}</td>
         <td><input type="number" name="固定数量" value="${detail['固定数量']}" class="edit-input"></td>
         <td><input type="number" name="人数_現状" value="${detail['人数_現状']}" class="edit-input"></td>
         <td class="calc-duration">${formatMin(calc.current.durationSec)}</td>
         <td class="calc-work">${formatMin(calc.current.workSec)}</td>
+        <td class="calc-warning">${escapeHtml(calc.warning)}</td>
         <td>
           <button class="btn-small save-btn" disabled>保存</button>
           <button class="btn-small disable-btn">無効化</button>
@@ -124,9 +109,10 @@ async function saveRow(tr, baseDetail) {
   btn.disabled = true;
 
   // 画面の入力値から新しいRowオブジェクトを作成
+  // 数値欄は数値に戻す（文字列のまま保存するとシート側が文字列になり、集計・並べ替えが狂う）
   const newRow = Object.assign({}, baseDetail);
   tr.querySelectorAll('.edit-input').forEach(input => {
-    newRow[input.name] = input.value;
+    newRow[input.name] = (input.type === 'number' && input.value !== '') ? Number(input.value) : input.value;
   });
 
   await saveRowData(tr, newRow, baseDetail, false);
@@ -149,6 +135,7 @@ async function saveRowData(tr, newRow, baseDetail, isRemove) {
       const calc = calculateDetailClient(newRow, appData.product['余裕率'], paramMap);
       tr.querySelector('.calc-duration').textContent = formatMin(calc.current.durationSec);
       tr.querySelector('.calc-work').textContent = formatMin(calc.current.workSec);
+      tr.querySelector('.calc-warning').textContent = calc.warning;
     }
   } else if (res.conflict) {
     alert(res.message + '\n画面をリロードするか、競合内容を確認してください。');

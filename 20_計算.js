@@ -73,13 +73,29 @@ function calculateDetail(row, allowanceRate, parameters) {
   const unit = row['単位'] || '台';
   const isPerUnit = (unit === '台');
 
+  // C38: 作業方式と人数の整合検証
+  const warnings = [];
+  const method = row['作業方式'] || '';
+  const currentPersons = Number(row['人数_現状'] || 0);
+  if (['機械自動（人は離れられる）', '自動搬送'].includes(method)) {
+    if (currentPersons > 0) warnings.push('【警告】自動化方式では人数は0である必要があります。');
+  } else if (method) {
+    if (currentPersons < 1) warnings.push('【警告】手作業または操作・監視を伴う方式では人数は1以上である必要があります。');
+  }
+  // C19: 数量方式「部品の使用数」は使用部品シート（5.13）が未実装のため、数量1として計算している
+  if (row['数量方式'] === '部品の使用数') {
+    warnings.push('【警告】数量方式「部品の使用数」は未対応です。数量1として計算しています。');
+  }
+  const warningMessage = warnings.join(' ');
+
   return {
     unit: unit,
     isPerUnit: isPerUnit, // true なら「台あたり集計」の対象
     current: current,
     target: target,
+    warning: warningMessage,
     // C07: 改善効果 (現状工数 - 目標工数)
-    effectWorkSec: current.workSec - target.target,
+    effectWorkSec: current.workSec - target.workSec,
     effectStdWorkSec: current.stdWorkSec - target.stdWorkSec
   };
 }
