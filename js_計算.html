@@ -1,0 +1,53 @@
+<script>
+// 20_計算.gs と同じロジックをクライアント側にも配置（即時プレビュー用）
+function formatMin(sec) {
+  return Math.round((sec / 60) * 10) / 10;
+}
+
+function calculateDetailClient(row, allowanceRate, parameters) {
+  const calcSingle = (isTarget) => {
+    const netTimePrefix = isTarget ? '正味時間_目標' : '正味時間_現状';
+    const personPrefix = isTarget ? '人数_目標' : '人数_現状';
+
+    let netTime = row[netTimePrefix];
+    if (isTarget && (netTime === '' || netTime === null || netTime === undefined)) netTime = row['正味時間_現状'];
+    netTime = Number(netTime || 0);
+
+    let persons = row[personPrefix];
+    if (isTarget && (persons === '' || persons === null || persons === undefined)) persons = row['人数_現状'];
+    persons = Number(persons || 0);
+
+    if (isTarget && netTime === 0) return { durationSec: 0, workSec: 0, stdDurationSec: 0, stdWorkSec: 0 };
+
+    let qty = 1;
+    if (row['数量方式'] === '固定') {
+      qty = Number(row['固定数量'] || 1);
+    } else if (row['数量方式'] === 'パラメータ') {
+      const paramValue = Number(parameters[row['数量パラメータID']] || 0);
+      const coef = Number(row['係数'] || 1); // 係数デフォルト1
+      qty = paramValue * coef;
+    }
+
+    let durationSec = 0, workSec = 0;
+    if (row['時間方式'] === '分担作業') {
+      if (row['上限人数']) persons = Math.min(persons, Number(row['上限人数']));
+      if (persons < 1) persons = 1;
+      workSec = netTime * qty;
+      durationSec = workSec / persons;
+    } else {
+      durationSec = netTime * qty;
+      workSec = durationSec * persons;
+    }
+
+    const rate = 1 + (Number(allowanceRate) / 100);
+    return { durationSec, workSec, stdDurationSec: durationSec * rate, stdWorkSec: workSec * rate };
+  };
+
+  const current = calcSingle(false);
+  return {
+    unit: row['単位'] || '台',
+    current: current,
+    // (目標値や効果は省略。画面UI上で利用する現在値のみ抽出)
+  };
+}
+</script>

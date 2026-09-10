@@ -1,0 +1,28 @@
+<script>
+// サーバ呼び出しラッパー
+function callServer(funcName, ...args) {
+  return new Promise((resolve, reject) => {
+    google.script.run
+      .withSuccessHandler(res => {
+        if (res && res.ok !== undefined && !res.ok) {
+          showStatus('エラー: ' + res.message, true);
+          reject(res);
+        } else {
+          resolve(res);
+        }
+      })
+      .withFailureHandler(err => {
+        showStatus('通信エラー: ' + err.message, true);
+        reject(err);
+      })
+      [funcName](...args);
+  });
+}
+
+function showStatus(msg, isError = false) {
+  const el = document.getElementById('status-message');
+  el.textContent = msg;
+  el.style.color = isError ? '#ff7b7b' : '#ffeb3b';
+  if (!isError) setTimeout(() => { el.textContent = ''; }, 3000);
+}
+</script>
