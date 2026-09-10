@@ -49,12 +49,40 @@ function escapeHtml(s) {
 }
 
 // 選択肢を組み立てる。現在値が一覧に無い場合も選択肢として残す（保存時の値の取り違えを防ぐ）
-function buildSelect(name, list, current) {
+function buildSelect(name, list, current, isDisabled = false) {
   const cur = current == null ? '' : String(current);
   const items = list.slice();
   if (cur !== '' && items.indexOf(cur) === -1) items.push(cur);
   const opts = items.map(v =>
     `<option value="${escapeHtml(v)}"${v === cur ? ' selected' : ''}>${escapeHtml(v)}</option>`).join('');
-  return `<select name="${name}" class="edit-input">${opts}</select>`;
+  return `<select name="${name}" class="edit-input" ${isDisabled ? 'disabled' : ''}>${opts}</select>`;
 }
+
+// タブ切り替え処理
+document.addEventListener('DOMContentLoaded', () => {
+  const tabWorks = document.getElementById('tab-works');
+  const tabSummary = document.getElementById('tab-summary');
+  const viewWorks = document.getElementById('works-view');
+  const viewSummary = document.getElementById('summary-view');
+
+  if (tabWorks && tabSummary) {
+    tabWorks.addEventListener('click', () => {
+      tabWorks.classList.add('active');
+      tabSummary.classList.remove('active');
+      viewWorks.style.display = 'block';
+      viewSummary.style.display = 'none';
+    });
+
+    tabSummary.addEventListener('click', () => {
+      tabSummary.classList.add('active');
+      tabWorks.classList.remove('active');
+      viewWorks.style.display = 'none';
+      viewSummary.style.display = 'block';
+      // 集計関数の呼び出し（js_集計.html に定義）
+      if (typeof renderSummary === 'function') {
+        renderSummary();
+      }
+    });
+  }
+});
 </script>

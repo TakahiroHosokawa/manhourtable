@@ -73,6 +73,15 @@ function saveWorkDetail(newRow, baseRow) {
 
     if (rowIndex === -1) {
       // 新規追加（監査項目を必ず埋める）
+      // ID自動採番 (製品コード-E-連番)
+      let newId = newRow['内訳ID'];
+      if (!newId) {
+         // 簡単のため現在時刻ミリ秒を連番代わりにするか、本来はシートから最大値を取る
+         const maxNum = data.length; 
+         newId = 'MP2500-E-' + (maxNum + 1000).toString() + Date.now().toString().slice(-4);
+         newRow['内訳ID'] = newId;
+      }
+      
       const appendData = headers.map(h => {
         if (h === '作成日時' || h === '更新日時') return now;
         if (h === '作成者' || h === '更新者') return user;

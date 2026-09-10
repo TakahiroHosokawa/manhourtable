@@ -1,6 +1,7 @@
 <script>
 let appData = {};
 let paramMap = {};
+let showDisabled = false;
 
 // 初期化
 document.addEventListener('DOMContentLoaded', async () => {
@@ -13,91 +14,188 @@ document.addEventListener('DOMContentLoaded', async () => {
     renderTable();
     showStatus('読み込み完了');
   }
+
+  // 無効化行の表示トグル
+  const toggleBtn = document.getElementById('toggle-disabled');
+  if (toggleBtn) {
+    toggleBtn.addEventListener('change', (e) => {
+      showDisabled = e.target.checked;
+      renderTable();
+    });
+  }
 });
+
+// ドラッグ&ドロップ用の変数
+let draggedRow = null;
 
 // テーブル描画
 function renderTable() {
-  const tbody = document.querySelector('#works-table tbody');
+  const table = document.querySelector('#works-table');
+  table.querySelectorAll('tbody').forEach(tb => tb.remove());
   
   // 表示項目を絞った簡易版ヘッダ
-  const cols = ['作業名', '順序', '作業内訳名', '区分', '作業方式', '単位', '時間方式', '正味時間(現)', '数量方式', '固定数量', '人数(現)', '所要(分)', '工数(人・分)', '検証', '操作'];
-  document.querySelector('#works-table thead').innerHTML = `<tr>${cols.map(c => `<th>${c}</th>`).join('')}</tr>`;
+  const cols = [
+    '作業名', '順序', '作業内訳名', '区分', '作業方式', 
+    '基準<br><small>(台/便/日)</small>', '時間方式', 
+    '正味時間(現)<br><small>(秒/箇所)</small>', '数量方式', '固定数量<br><small>(箇所/回)</small>', '人数(現)', 
+    '所要<br><small>(分)</small>', '工数<br><small>(人・分)</small>', '検証', '操作'
+  ];
   
-  tbody.innerHTML = '';
+  const theadHtml = `
+    <tr style="background-color: #f8f9fa;">
+      <th colspan="7" style="text-align:right; font-weight:normal; font-size:0.85em; color:#555;">💡 項目の繋がり（計算の流れ）➔</th>
+      <th colspan="3" style="text-align:center; font-size:0.85em; background:#e3f2fd; border-bottom: 2px solid #2196f3; padding: 4px;">
+        【 正味時間 】×【 数量 】＝ 動作の合計時間
+      </th>
+      <th colspan="3" style="text-align:center; font-size:0.85em; background:#e8f5e9; border-bottom: 2px solid #4caf50; padding: 4px;">
+        合計時間 と【 人数 】から 所要・工数 を算出
+      </th>
+      <th colspan="2"></th>
+    </tr>
+    <tr>${cols.map(c => `<th>${c}</th>`).join('')}</tr>
+  `;
+  document.querySelector('#works-table thead').innerHTML = theadHtml;
   
-  // 状態が有効なものだけ抽出して表示
-  const validWorks = appData.works.filter(w => w['状態'] === '有効');
-  const validDetails = appData.details.filter(d => d['状態'] === '有効');
+  // 状態が有効なものだけ抽出して表示（親の作業も）
+  const validWorks = appData.works.filter(w => showDisabled || w['状態'] !== '無効');
+  const validDetails = appData.details;
 
   validWorks.forEach(work => {
+    // 作業ごとにtbodyを分ける（ドラッグ&ドロップを同じ作業内に制限するため）
+    const tbody = document.createElement('tbody');
+    tbody.className = 'work-group';
+    tbody.dataset.workId = work['作業ID'];
+
     // 作業（親）の行
     const trW = document.createElement('tr');
     trW.style.backgroundColor = '#e8f5e9';
-    trW.innerHTML = `<td colspan="${cols.length}"><b>${work['作業名']}</b> (作業ID: ${work['作業ID']})</td>`;
+    trW.innerHTML = `<td colspan="${cols.length - 1}"><b>${work['作業名']}</b> (作業ID: ${work['作業ID']}) ${work['状態'] === '無効' ? '<span style="color:red;">【無効】</span>' : ''}</td>
+                     <td><button class="btn-small add-detail-btn" data-work-id="${work['作業ID']}">+ 内訳追加</button></td>`;
     tbody.appendChild(trW);
 
     // その作業に紐づく内訳
     const details = validDetails.filter(d => d['作業ID'] === work['作業ID']).sort((a,b) => a['順序'] - b['順序']);
     
     details.forEach(detail => {
+      const isDisabled = detail['状態'] === '無効';
+      if (isDisabled && !showDisabled) return;
+
       // 即時計算
       const calc = calculateDetailClient(detail, appData.product['余裕率'], paramMap);
       
       const trD = document.createElement('tr');
+      trD.className = 'detail-row';
       trD.dataset.id = detail['内訳ID'];
       // 基準値として編集開始時のデータをJSONで保持
       trD.dataset.baseRow = JSON.stringify(detail);
+
+      if (isDisabled) {
+        trD.style.backgroundColor = '#f5f5f5';
+        trD.style.color = '#999';
+      } else {
+        // ドラッグ&ドロップ対応
+        trD.draggable = true;
+        trD.addEventListener('dragstart', handleDragStart);
+        trD.addEventListener('dragover', handleDragOver);
+        trD.addEventListener('dragenter', handleDragEnter);
+        trD.addEventListener('dragleave', handleDragLeave);
+        trD.addEventListener('drop', handleDrop);
+      }
       
       // 編集可能項目を input で生成
       trD.innerHTML = `
-        <td></td>
-        <td><input type="number" name="順序" value="${detail['順序']}" class="edit-input" style="width:40px;"></td>
-        <td><input type="text" name="作業内訳名" value="${escapeHtml(detail['作業内訳名'])}" class="edit-input long"></td>
-        <td>${buildSelect('区分', OPTIONS['区分'], detail['区分'])}</td>
-        <td>${buildSelect('作業方式', OPTIONS['作業方式'], detail['作業方式'])}</td>
-        <td>${buildSelect('単位', OPTIONS['単位'], detail['単位'])}</td>
-        <td>${buildSelect('時間方式', OPTIONS['時間方式'], detail['時間方式'])}</td>
-        <td><input type="number" name="正味時間_現状" value="${detail['正味時間_現状']}" class="edit-input" step="0.1"></td>
-        <td>${buildSelect('数量方式', OPTIONS['数量方式'], detail['数量方式'])}</td>
-        <td><input type="number" name="固定数量" value="${detail['固定数量']}" class="edit-input"></td>
-        <td><input type="number" name="人数_現状" value="${detail['人数_現状']}" class="edit-input"></td>
+        <td style="cursor: ${isDisabled ? 'default' : 'grab'}; text-align:center; color:#ccc;">${isDisabled ? '' : '☰'}</td>
+        <td><input type="number" name="順序" value="${detail['順序']}" class="edit-input" style="width:40px;" ${isDisabled ? 'disabled' : ''}></td>
+        <td><input type="text" name="作業内訳名" value="${escapeHtml(detail['作業内訳名'])}" class="edit-input long" ${isDisabled ? 'disabled' : ''}></td>
+        <td>${buildSelect('区分', OPTIONS['区分'], detail['区分'], isDisabled)}</td>
+        <td>${buildSelect('作業方式', OPTIONS['作業方式'], detail['作業方式'], isDisabled)}</td>
+        <td>${buildSelect('単位', OPTIONS['単位'], detail['単位'], isDisabled)}</td>
+        <td>${buildSelect('時間方式', OPTIONS['時間方式'], detail['時間方式'], isDisabled)}</td>
+        <td><input type="number" name="正味時間_現状" value="${detail['正味時間_現状']}" class="edit-input" step="0.1" ${isDisabled ? 'disabled' : ''}></td>
+        <td>${buildSelect('数量方式', OPTIONS['数量方式'], detail['数量方式'], isDisabled)}</td>
+        <td><input type="number" name="固定数量" value="${detail['固定数量']}" class="edit-input" ${isDisabled ? 'disabled' : ''}></td>
+        <td><input type="number" name="人数_現状" value="${detail['人数_現状']}" class="edit-input" ${isDisabled ? 'disabled' : ''}></td>
         <td class="calc-duration">${formatMin(calc.current.durationSec)}</td>
         <td class="calc-work">${formatMin(calc.current.workSec)}</td>
         <td class="calc-warning">${escapeHtml(calc.warning)}</td>
         <td>
-          <button class="btn-small save-btn" disabled>保存</button>
-          <button class="btn-small disable-btn">無効化</button>
+          ${isDisabled 
+            ? `<button class="btn-small restore-btn">復活</button>`
+            : `<button class="btn-small save-btn" disabled>保存</button>
+               <button class="btn-small disable-btn">無効化</button>
+               <button class="btn-small clone-btn">複製</button>`
+          }
         </td>
       `;
       tbody.appendChild(trD);
       
-      // 変更検知イベント
-      trD.querySelectorAll('.edit-input').forEach(input => {
-        input.addEventListener('change', () => {
-          input.classList.add('changed');
-          trD.querySelector('.save-btn').disabled = false;
+      if (!isDisabled) {
+        // 変更検知イベント
+        trD.querySelectorAll('.edit-input').forEach(input => {
+          input.addEventListener('change', () => {
+            input.classList.add('changed');
+            trD.querySelector('.save-btn').disabled = false;
+          });
+          
+          // F16: Tab/Enterでの移動対応 (簡易版)
+          input.addEventListener('keydown', (e) => {
+            if(e.key === 'Enter') {
+              e.preventDefault();
+              // 保存ボタンを押させるか、次のフィールドへ（ここではフォーカス移動をブラウザに任せる）
+            }
+          });
         });
+
+        // 保存ボタン
+        trD.querySelector('.save-btn').addEventListener('click', () => saveRow(trD, detail));
         
-        // F16: Tab/Enterでの移動対応 (簡易版)
-        input.addEventListener('keydown', (e) => {
-          if(e.key === 'Enter') {
-            e.preventDefault();
-            // 保存ボタンを押させるか、次のフィールドへ（ここではフォーカス移動をブラウザに任せる）
+        // 無効化ボタン (F01)
+        trD.querySelector('.disable-btn').addEventListener('click', () => {
+          if(confirm('この作業内訳を無効化しますか？')) {
+            const newRow = Object.assign({}, detail);
+            newRow['状態'] = '無効';
+            saveRowData(trD, newRow, detail, true);
           }
         });
-      });
 
-      // 保存ボタン
-      trD.querySelector('.save-btn').addEventListener('click', () => saveRow(trD, detail));
-      
-      // 無効化ボタン (F01)
-      trD.querySelector('.disable-btn').addEventListener('click', () => {
-        if(confirm('この作業内訳を無効化しますか？')) {
-          const newRow = Object.assign({}, detail);
-          newRow['状態'] = '無効';
-          saveRowData(trD, newRow, detail, true);
-        }
-      });
+        // 複製ボタン (F01)
+        trD.querySelector('.clone-btn').addEventListener('click', () => {
+          const clonedRow = Object.assign({}, detail);
+          // 新規登録扱いにするためIDを空にする
+          clonedRow['内訳ID'] = '';
+          clonedRow['作業内訳名'] = clonedRow['作業内訳名'] + '（コピー）';
+          // 派生元を記録 (F47, F38用だが今回は同一作業内複製)
+          clonedRow['派生元内訳ID'] = detail['内訳ID'];
+          
+          // サーバーへ新規追加として送信（元の行はダミー）
+          saveRowData(null, clonedRow, clonedRow, false, true);
+        });
+      } else {
+        // 復活ボタン (F01)
+        trD.querySelector('.restore-btn').addEventListener('click', () => {
+          if(confirm('この作業内訳を有効に戻しますか？')) {
+            const newRow = Object.assign({}, detail);
+            newRow['状態'] = '有効';
+            saveRowData(trD, newRow, detail, false, false, true);
+          }
+        });
+      }
+    });
+    table.appendChild(tbody);
+  });
+
+  // 内訳追加イベント
+  document.querySelectorAll('.add-detail-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const workId = e.target.dataset.workId;
+      const newRow = {
+        '内訳ID': '',
+        '作業ID': workId,
+        '作業内訳名': '新規作業内訳',
+        '順序': 99,
+        '状態': '有効'
+      };
+      saveRowData(null, newRow, newRow, false, true);
     });
   });
 }
@@ -119,12 +217,23 @@ async function saveRow(tr, baseDetail) {
 }
 
 // サーバー通信
-async function saveRowData(tr, newRow, baseDetail, isRemove) {
-  showStatus('保存中...');
+async function saveRowData(tr, newRow, baseDetail, isRemove, isAdd = false, isRestore = false) {
+  showStatus(isAdd ? '追加中...' : '保存中...');
   const res = await callServer('saveWorkDetail', newRow, baseDetail);
   
   if (res.ok) {
-    showStatus('保存完了');
+    showStatus(isAdd ? '追加完了' : '保存完了');
+    if (isAdd || isRestore) {
+      // 追加または復活時はリロード
+      const reloadRes = await callServer('getAppData');
+      if (reloadRes.ok) {
+        appData = reloadRes.data;
+        appData.params.forEach(p => paramMap[p['パラメータID']] = p['値']);
+        renderTable();
+      }
+      return;
+    }
+    
     if (isRemove) {
       tr.remove(); // 画面から消す
     } else {
@@ -145,5 +254,66 @@ async function saveRowData(tr, newRow, baseDetail, isRemove) {
     tr.querySelector('.save-btn').textContent = '保存';
     tr.querySelector('.save-btn').disabled = false;
   }
+}
+
+// ドラッグ&ドロップ実装 (F13順序並び替え)
+function handleDragStart(e) {
+  draggedRow = this;
+  e.dataTransfer.effectAllowed = 'move';
+  e.dataTransfer.setData('text/html', this.outerHTML);
+  this.style.opacity = '0.4';
+}
+function handleDragOver(e) {
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
+  return false;
+}
+function handleDragEnter(e) {
+  this.style.borderTop = '2px dashed #2196f3';
+}
+function handleDragLeave(e) {
+  this.style.borderTop = '';
+}
+function handleDrop(e) {
+  e.stopPropagation();
+  this.style.borderTop = '';
+  if (draggedRow !== this && this.parentNode === draggedRow.parentNode) {
+    const tbody = this.parentNode;
+    const allRows = Array.from(tbody.querySelectorAll('.detail-row'));
+    const draggedIndex = allRows.indexOf(draggedRow);
+    const targetIndex = allRows.indexOf(this);
+
+    if (draggedIndex < targetIndex) {
+      this.after(draggedRow);
+    } else {
+      this.before(draggedRow);
+    }
+    recalcOrder(tbody);
+  }
+  return false;
+}
+// ドロップ終了後にお掃除
+document.addEventListener('dragend', (e) => {
+  if (draggedRow) {
+    draggedRow.style.opacity = '1';
+    draggedRow = null;
+  }
+  document.querySelectorAll('.detail-row').forEach(tr => tr.style.borderTop = '');
+});
+
+// 順序の再計算と変更マーク
+function recalcOrder(tbody) {
+  const rows = tbody.querySelectorAll('.detail-row');
+  let order = 10;
+  rows.forEach(tr => {
+    const input = tr.querySelector('input[name="順序"]');
+    if (input && Number(input.value) !== order) {
+      input.value = order;
+      input.classList.add('changed');
+      const btn = tr.querySelector('.save-btn');
+      if (btn) btn.disabled = false;
+    }
+    order += 10;
+  });
 }
 </script>
