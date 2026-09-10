@@ -38,7 +38,7 @@ function renderTable() {
     '作業名', '順序', '作業内訳名', '区分', '作業方式', 
     '基準<br><small>(台/便/日)</small>', '時間方式', 
     '正味時間(現)<br><small>(秒/箇所)</small>', '数量方式', '固定数量<br><small>(箇所/回)</small>', '人数(現)', 
-    '所要<br><small>(分)</small>', '工数<br><small>(人・分)</small>', '検証', '操作'
+    '所要<br><small>(分)</small>', '工数<br><small>(人・分)</small>', '紐付け', '検証', '操作'
   ];
   
   const theadHtml = `
@@ -50,7 +50,7 @@ function renderTable() {
       <th colspan="3" style="text-align:center; font-size:0.85em; background:#e8f5e9; border-bottom: 2px solid #4caf50; padding: 4px;">
         合計時間 と【 人数 】から 所要・工数 を算出
       </th>
-      <th colspan="2"></th>
+      <th colspan="3"></th>
     </tr>
     <tr>${cols.map(c => `<th>${c}</th>`).join('')}</tr>
   `;
@@ -117,6 +117,10 @@ function renderTable() {
         <td><input type="number" name="人数_現状" value="${detail['人数_現状']}" class="edit-input" ${isDisabled ? 'disabled' : ''}></td>
         <td class="calc-duration">${formatMin(calc.current.durationSec)}</td>
         <td class="calc-work">${formatMin(calc.current.workSec)}</td>
+        <td>
+          <button class="btn-small parts-btn" ${isDisabled ? 'disabled' : ''}>部品</button>
+          <button class="btn-small equip-btn" ${isDisabled ? 'disabled' : ''}>設備</button>
+        </td>
         <td class="calc-warning">${escapeHtml(calc.warning)}</td>
         <td>
           ${isDisabled 
@@ -148,7 +152,13 @@ function renderTable() {
 
         // 保存ボタン
         trD.querySelector('.save-btn').addEventListener('click', () => saveRow(trD, detail));
-        
+      
+        // 部品・設備紐付けボタン (F26, F60)
+        if (!isDisabled) {
+          trD.querySelector('.parts-btn').addEventListener('click', () => openPartsModal(detail['内訳ID']));
+          trD.querySelector('.equip-btn').addEventListener('click', () => openEquipModal(detail['内訳ID'], work['工程ID'], detail['作業班ID']));
+        }
+
         // 無効化ボタン (F01)
         trD.querySelector('.disable-btn').addEventListener('click', () => {
           if(confirm('この作業内訳を無効化しますか？')) {

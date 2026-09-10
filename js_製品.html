@@ -1,0 +1,319 @@
+<script>
+// =========================================
+// js_製品.html (S01 製品設定・組立ブロック管理)
+// =========================================
+
+document.addEventListener('DOMContentLoaded', () => {
+  const addBtn = document.getElementById('add-block-btn');
+  const reorderBtn = document.getElementById('reorder-block-btn');
+  
+  if (addBtn) {
+    addBtn.addEventListener('click', () => {
+      addNewBlockRow();
+    });
+  }
+  
+  if (reorderBtn) {
+    reorderBtn.addEventListener('click', async () => {
+      if (confirm('ブロックの順序を10刻みで一括で振り直します。よろしいですか？')) {
+        await reorderAllBlocks();
+      }
+    });
+  }
+});
+
+function renderProductBlocks() {
+  const tbody = document.querySelector('#block-table tbody');
+  if (!tbody || !appData || !appData.works) return;
+  tbody.innerHTML = '';
+  
+  // 組立ブロック＝現状はアプリ内で「作業(大工程/ブロック)」として管理している想定。
+  // 現状のデータモデル（作業シート）には 大工程/作業名 がある。
+  // ここで設定したブロックが、S02工数表の「緑色の親行」として表示されます。
+  
+  const works = appData.works || [];
+  const details = appData.details || [];
+  
+  // 順序でソート
+  works.sort((a, b) => Number(a['順序'] || 0) - Number(b['順序'] || 0));
+  
+  works.forEach(work => {
+    // 紐づく子データ（中工程・小工程）の集計
+    // 今のデータモデルは「作業(ブロック) -> 作業内訳(小工程)」の2階層なので、中工程数は一旦便宜上の表示とする
+    const childDetails = details.filter(d => d['作業ID'] === work['作業ID'] && d['状態'] !== '無効');
+    
+    let totalWorkSec = 0;
+    childDetails.forEach(d => {
+      // 簡易的に現状の人数・正味時間・数量から概算（厳密には20_計算.jsのロジックを呼ぶべき）
+      const calc = calculateDetailClient(d, appData.product['余裕率'] || 15, paramMap);
+      if (calc.unit === '台') {
+        totalWorkSec += calc.current.workSec || 0;
+      }
+    });
+    
+    const tr = document.createElement('tr');
+    tr.dataset.workId = work['作業ID'];
+    tr.dataset.baseRow = JSON.stringify(work);
+    
+    tr.innerHTML = `
+      <td>
+        <div style="font-size:0.8em; color:#2196f3; margin-bottom:2px;">S02工数表の親行になります</div>
+        <input type="text" name="作業名" value="${escapeHtml(work['作業名'])}" class="edit-input" style="width:100%;">
+        <input type="hidden" name="作業ID" value="${escapeHtml(work['作業ID'])}">
+      </td>
+      <td>
+        <input type="number" name="順序" value="${work['順序']}" class="edit-input" style="width:60px;">
+      </td>
+      <td style="text-align:right; color:#888;">(N/A)</td>
+      <td style="text-align:right;">${childDetails.length}</td>
+      <td style="text-align:right;">${formatMin(totalWorkSec)}</td>
+      <td>${buildSelect('状態', ['有効', '無効'], work['状態'])}</td>
+      <td>
+        <button class="btn-small save-block-btn" disabled>保存</button>
+        <button class="btn-small clone-block-btn">複製</button>
+      </td>
+    `;
+    tbody.appendChild(tr);
+    
+    // 変更検知
+    tr.querySelectorAll('.edit-input, select').forEach(input => {
+      input.addEventListener('change', () => {
+        tr.querySelector('.save-block-btn').disabled = false;
+        input.classList.add('changed');
+      });
+    });
+    
+    // 保存
+    tr.querySelector('.save-block-btn').addEventListener('click', () => saveBlockRow(tr, work));
+    
+    // 複製
+    tr.querySelector('.clone-block-btn').addEventListener('click', () => {
+      if (confirm('このブロックと、それに紐づくすべての子工程を複製しますか？')) {
+        cloneBlock(work['作業ID']);
+      }
+    });
+  });
+
+  // 製品切り替えと複製のUIロジックをここで実行する
+  initProductControls();
+}
+
+function initProductControls() {
+  const selector = document.getElementById('product-selector');
+  const cloneProductBtn = document.getElementById('clone-product-btn');
+    
+  if (selector && appData && appData.allProducts) {
+    // セレクトボックスの選択肢をサーバーから取得した製品一覧で上書き
+    selector.innerHTML = appData.allProducts.map(p => 
+      `<option value="${escapeHtml(p['製品ID'])}" ${p['製品ID'] === appData.product['製品ID'] ? 'selected' : ''}>
+          ${escapeHtml(p['型式名'])} (${escapeHtml(p['製品コード'])})
+         </option>`
+    ).join('');
+    
+    // 切り替えイベント
+    // リスナーの重複登録を防ぐため、一度クローンして再配置
+    const newSelector = selector.cloneNode(true);
+    selector.parentNode.replaceChild(newSelector, selector);
+    newSelector.addEventListener('change', async (e) => {
+      const selectedId = e.target.value;
+      if (selectedId === appData.product['製品ID']) return;
+      
+      showStatus('製品を切り替えています...');
+      const res = await callServer('switchProduct', selectedId);
+      if (res.ok) {
+        const reloadRes = await callServer('getAppData');
+        if (reloadRes.ok) {
+          appData = reloadRes.data;
+          appData.params.forEach(p => paramMap[p['パラメータID']] = p['値']);
+          renderProductBlocks();
+          // 他の画面の再描画が必要な場合はリロードするか各関数を呼ぶ
+          alert('製品を切り替えました。\nS02工数表などのデータが変更されています。');
+        }
+      }
+    });
+  }
+  
+  if (cloneProductBtn && appData && appData.product) {
+    const newCloneBtn = cloneProductBtn.cloneNode(true);
+    cloneProductBtn.parentNode.replaceChild(newCloneBtn, cloneProductBtn);
+    newCloneBtn.addEventListener('click', async () => {
+      const currentCode = appData.product['製品コード'] || 'MP';
+      const newCode = prompt(`新しい製品コードを入力してください\n(現在の型式: ${currentCode})`, currentCode + '-NEW');
+      if (!newCode) return;
+      
+      const newName = prompt('新しい型式名を入力してください', appData.product['型式名'] + ' 派生モデル');
+      if (!newName) return;
+      
+      showStatus('製品を丸ごと複製しています（約10〜20秒かかります）...');
+      const res = await callServer('cloneProduct', newCode, newName);
+      if (res.ok) {
+        alert('製品の複製が完了し、新しい製品に切り替わりました。');
+        const reloadRes = await callServer('getAppData');
+        if (reloadRes.ok) {
+          appData = reloadRes.data;
+          appData.params.forEach(p => paramMap[p['パラメータID']] = p['値']);
+          renderProductBlocks();
+        }
+      } else {
+        alert('エラー: ' + res.message);
+      }
+    });
+  }
+}
+
+function addNewBlockRow() {
+  const tbody = document.querySelector('#block-table tbody');
+  const tr = document.createElement('tr');
+  
+  const newWork = {
+    '作業ID': '',
+    '製品ID': appData.product['製品ID'] || 'P-001',
+    '作業名': '新規ブロック',
+    '順序': 999,
+    '状態': '有効'
+  };
+  
+  tr.innerHTML = `
+    <td>
+      <input type="text" name="作業名" value="${newWork['作業名']}" class="edit-input" style="width:100%;">
+      <input type="hidden" name="作業ID" value="">
+    </td>
+    <td>
+      <input type="number" name="順序" value="${newWork['順序']}" class="edit-input" style="width:60px;">
+    </td>
+    <td style="text-align:right; color:#888;">0</td>
+    <td style="text-align:right;">0</td>
+    <td style="text-align:right;">0</td>
+    <td>${buildSelect('状態', ['有効', '無効'], newWork['状態'])}</td>
+    <td>
+      <button class="btn-small save-block-btn">追加</button>
+    </td>
+  `;
+  
+  tbody.appendChild(tr);
+  tr.querySelector('.save-block-btn').addEventListener('click', () => saveBlockRow(tr, newWork, true));
+}
+
+async function saveBlockRow(tr, baseObj, isNew = false) {
+  const btn = tr.querySelector('.save-block-btn');
+  btn.textContent = isNew ? '追加中...' : '保存中...';
+  btn.disabled = true;
+  
+  const newObj = Object.assign({}, baseObj);
+  tr.querySelectorAll('.edit-input, select').forEach(input => {
+    if (input.name) {
+      newObj[input.name] = input.type === 'number' ? Number(input.value) : input.value;
+    }
+  });
+  
+  showStatus('ブロックを保存しています...');
+  // F72: ブロック名変更時の警告
+  if (!isNew && newObj['作業名'] !== baseObj['作業名']) {
+    alert('【注意】ブロック名を変更すると、別型式との差分比較(名前突合)が外れる可能性があります。');
+  }
+
+  const res = await callServer('saveWorkBlock', newObj);
+  if (res.ok) {
+    showStatus('保存完了');
+    const reloadRes = await callServer('getAppData');
+    if (reloadRes.ok) {
+      appData = reloadRes.data;
+      renderProductBlocks();
+    }
+  } else {
+    alert('エラー: ' + res.message);
+    btn.textContent = isNew ? '追加' : '保存';
+    btn.disabled = false;
+  }
+}
+
+async function cloneBlock(workId) {
+  showStatus('複製しています...');
+  const res = await callServer('cloneWorkBlock', workId);
+  if (res.ok) {
+    showStatus('複製完了');
+    const reloadRes = await callServer('getAppData');
+    if (reloadRes.ok) {
+      appData = reloadRes.data;
+      renderProductBlocks();
+    }
+  } else {
+    alert('エラー: ' + res.message);
+  }
+}
+
+async function reorderAllBlocks() {
+  showStatus('順序を振り直しています...');
+  const res = await callServer('reorderAllBlocks');
+  if (res.ok) {
+    showStatus('振り直し完了');
+    const reloadRes = await callServer('getAppData');
+    if (reloadRes.ok) {
+      appData = reloadRes.data;
+      renderProductBlocks();
+    }
+  } else {
+    alert('エラー: ' + res.message);
+  }
+}
+
+// 製品切り替えと複製のUIロジックを追加
+const selector = document.getElementById('product-selector');
+const cloneProductBtn = document.getElementById('clone-product-btn');
+  
+if (selector && appData.allProducts) {
+  // セレクトボックスの選択肢をサーバーから取得した製品一覧で上書き
+  selector.innerHTML = appData.allProducts.map(p => 
+    `<option value="${escapeHtml(p['製品ID'])}" ${p['製品ID'] === appData.product['製品ID'] ? 'selected' : ''}>
+        ${escapeHtml(p['型式名'])} (${escapeHtml(p['製品コード'])})
+       </option>`
+  ).join('');
+  
+  // 切り替えイベント
+  // リスナーの重複登録を防ぐため、一度クローンして再配置
+  const newSelector = selector.cloneNode(true);
+  selector.parentNode.replaceChild(newSelector, selector);
+  newSelector.addEventListener('change', async (e) => {
+    const selectedId = e.target.value;
+    if (selectedId === appData.product['製品ID']) return;
+    
+    showStatus('製品を切り替えています...');
+    const res = await callServer('switchProduct', selectedId);
+    if (res.ok) {
+      const reloadRes = await callServer('getAppData');
+      if (reloadRes.ok) {
+        appData = reloadRes.data;
+        renderProductBlocks();
+        // 他の画面の再描画が必要な場合はリロードするか各関数を呼ぶ
+        alert('製品を切り替えました。\nS02工数表などのデータが変更されています。');
+      }
+    }
+  });
+}
+
+if (cloneProductBtn) {
+  const newCloneBtn = cloneProductBtn.cloneNode(true);
+  cloneProductBtn.parentNode.replaceChild(newCloneBtn, cloneProductBtn);
+  newCloneBtn.addEventListener('click', async () => {
+    const currentCode = appData.product['製品コード'] || 'MP';
+    const newCode = prompt(`新しい製品コードを入力してください\n(現在の型式: ${currentCode})`, currentCode + '-NEW');
+    if (!newCode) return;
+    
+    const newName = prompt('新しい型式名を入力してください', appData.product['型式名'] + ' 派生モデル');
+    if (!newName) return;
+    
+    showStatus('製品を丸ごと複製しています（約10〜20秒かかります）...');
+    const res = await callServer('cloneProduct', newCode, newName);
+    if (res.ok) {
+      alert('製品の複製が完了し、新しい製品に切り替わりました。');
+      const reloadRes = await callServer('getAppData');
+      if (reloadRes.ok) {
+        appData = reloadRes.data;
+        renderProductBlocks();
+      }
+    } else {
+      alert('エラー: ' + res.message);
+    }
+  });
+}
+</script>

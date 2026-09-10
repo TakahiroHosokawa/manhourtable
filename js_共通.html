@@ -62,26 +62,45 @@ function buildSelect(name, list, current, isDisabled = false) {
 document.addEventListener('DOMContentLoaded', () => {
   const tabWorks = document.getElementById('tab-works');
   const tabSummary = document.getElementById('tab-summary');
+  const tabMaster = document.getElementById('tab-master');
+  const tabProduct = document.getElementById('tab-product');
+  
   const viewWorks = document.getElementById('works-view');
   const viewSummary = document.getElementById('summary-view');
+  const viewMaster = document.getElementById('master-view');
+  const viewProduct = document.getElementById('product-view');
 
-  if (tabWorks && tabSummary) {
+  if (tabWorks && tabSummary && tabMaster && tabProduct) {
+    const hideAll = () => {
+      [tabWorks, tabSummary, tabMaster, tabProduct].forEach(t => t.classList.remove('active'));
+      [viewWorks, viewSummary, viewMaster, viewProduct].forEach(v => v.style.display = 'none');
+    };
+
     tabWorks.addEventListener('click', () => {
+      hideAll();
       tabWorks.classList.add('active');
-      tabSummary.classList.remove('active');
       viewWorks.style.display = 'block';
-      viewSummary.style.display = 'none';
     });
 
     tabSummary.addEventListener('click', () => {
+      hideAll();
       tabSummary.classList.add('active');
-      tabWorks.classList.remove('active');
-      viewWorks.style.display = 'none';
       viewSummary.style.display = 'block';
-      // 集計関数の呼び出し（js_集計.html に定義）
-      if (typeof renderSummary === 'function') {
-        renderSummary();
-      }
+      if (typeof renderSummary === 'function') renderSummary();
+    });
+
+    tabMaster.addEventListener('click', () => {
+      hideAll();
+      tabMaster.classList.add('active');
+      viewMaster.style.display = 'block';
+      if (typeof renderMaster === 'function') renderMaster();
+    });
+    
+    tabProduct.addEventListener('click', () => {
+      hideAll();
+      tabProduct.classList.add('active');
+      viewProduct.style.display = 'block';
+      if (typeof renderProductBlocks === 'function') renderProductBlocks();
     });
   }
 });
