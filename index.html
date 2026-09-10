@@ -11,8 +11,10 @@
     </div>
     
     <div class="tab-container">
-      <button class="tab-btn active">工数表(S02)</button>
-      <button class="tab-btn disabled">集計(S03)</button>
+      <button class="tab-btn" id="tab-product">製品設定(S01)</button>
+      <button class="tab-btn" id="tab-master">マスタ管理(S07)</button>
+      <button class="tab-btn active" id="tab-works">工数表(S02)</button>
+      <button class="tab-btn" id="tab-summary">集計(S03)</button>
     </div>
 
     <div id="filter-container" style="padding: 10px; background: #f9f9f9; border-bottom: 1px solid #ddd;">
@@ -22,17 +24,80 @@
     </div>
 
     <div id="app-content">
-      <!-- js_工数表.html でテーブルを描画します -->
-      <table id="works-table">
-        <thead>
-          <!-- ヘッダはJSで動的に生成 -->
-        </thead>
-        <tbody></tbody>
-      </table>
+      <div id="product-view" style="display:none;">
+        <div style="display:flex; justify-content:space-between; align-items:flex-end; margin-bottom:15px;">
+          <div>
+            <h3>製品（型式）の切替</h3>
+            <select id="product-selector" class="edit-input" style="font-size:16px; padding:5px;">
+              <option value="MP2500">MP2500 (現在選択中)</option>
+              <option value="MP3000">MP3000 (別型式の例)</option>
+            </select>
+            <button id="clone-product-btn" class="btn-small" style="margin-left:10px;">製品を複製して新規作成</button>
+          </div>
+        </div>
+        
+        <hr style="margin:20px 0; border:0; border-top:1px solid #ccc;">
+        
+        <h3>組立ブロックの一覧</h3>
+        <p style="font-size:0.9em; color:#555;">ここで登録したブロックが、S02工数表の親行（緑色の行）として表示されます。</p>
+        <button id="add-block-btn" class="btn-small" style="margin-bottom:10px;">+ ブロック追加</button>
+        <button id="reorder-block-btn" class="btn-small" style="margin-bottom:10px;">順序一括振り直し</button>
+        <table id="block-table" class="summary-table">
+          <thead>
+            <tr>
+              <th>ブロック名</th>
+              <th>順序</th>
+              <th>中工程数</th>
+              <th>小工程数</th>
+              <th>工数合計(人・分)</th>
+              <th>状態</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div id="master-view" style="display:none;">
+        <div class="master-menu" style="margin-bottom: 20px;">
+          <select id="master-selector" style="padding:5px; font-size:16px;">
+            <option value="equipment">設備マスタ (F59)</option>
+            <option value="process">工程/大工程マスタ</option>
+            <option value="group">作業班マスタ</option>
+          </select>
+          <button id="add-master-btn" class="btn-small">+ 新規追加</button>
+        </div>
+        <div id="master-content">
+          <table id="master-table" class="summary-table">
+            <thead></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+      <div id="works-view">
+        <div id="table-controls" style="margin-bottom: 10px; text-align: right;">
+          <label style="cursor: pointer; font-size: 0.9em; color: #555;">
+            <input type="checkbox" id="toggle-disabled"> 無効化された行を表示
+          </label>
+        </div>
+        <!-- js_工数表.html でテーブルを描画します -->
+        <table id="works-table">
+          <thead>
+            <!-- ヘッダはJSで動的に生成 -->
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div id="summary-view" style="display:none;">
+        <div id="summary-content">集計データを読み込んでいます...</div>
+      </div>
     </div>
 
     <?!= HtmlService.createHtmlOutputFromFile('js_共通').getContent(); ?>
+    <?!= HtmlService.createHtmlOutputFromFile('js_製品').getContent(); ?>
+    <?!= HtmlService.createHtmlOutputFromFile('js_マスタ').getContent(); ?>
     <?!= HtmlService.createHtmlOutputFromFile('js_計算').getContent(); ?>
     <?!= HtmlService.createHtmlOutputFromFile('js_工数表').getContent(); ?>
+    <?!= HtmlService.createHtmlOutputFromFile('js_集計').getContent(); ?>
+    <?!= HtmlService.createHtmlOutputFromFile('js_紐付けモーダル').getContent(); ?>
   </body>
 </html>

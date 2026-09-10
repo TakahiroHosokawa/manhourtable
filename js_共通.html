@@ -4,11 +4,15 @@ function callServer(funcName, ...args) {
   return new Promise((resolve, reject) => {
     google.script.run
       .withSuccessHandler(res => {
-        if (res && res.ok !== undefined && !res.ok) {
-          showStatus('エラー: ' + res.message, true);
-          reject(res);
+        let parsed = res;
+        if (typeof res === 'string') {
+          try { parsed = JSON.parse(res); } catch (e) {}
+        }
+        if (parsed && parsed.ok !== undefined && !parsed.ok) {
+          showStatus('エラー: ' + parsed.message, true);
+          reject(parsed);
         } else {
-          resolve(res);
+          resolve(parsed);
         }
       })
       .withFailureHandler(err => {
@@ -25,4 +29,79 @@ function showStatus(msg, isError = false) {
   el.style.color = isError ? '#ff7b7b' : '#ffeb3b';
   if (!isError) setTimeout(() => { el.textContent = ''; }, 3000);
 }
+</script>
+<script>
+// 5.9 の固定選択肢（アプリ固定。選択肢シートでは管理しない）
+const OPTIONS = {
+  '区分': ['実作業', '付随作業', '加工作業', '運搬', '手待ち', '段取り', '間接作業'],
+  '作業方式': ['人手', '人手＋工具・治具', '機械操作', '機械自動（人は離れられる）', '機械自動・監視要', '自動搬送'],
+  '単位': ['台', '便', '日'],
+  '時間方式': ['分担作業', '同時作業'],
+  '数量方式': ['固定', 'パラメータ', '部品の使用数'],
+  '確度': ['未観測', '暫定', '確定'],
+  '中断可否': ['中断可', '中断不可'],
+  '占有方式': ['専有', '共有']
+};
+
+function escapeHtml(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+// 選択肢を組み立てる。現在値が一覧に無い場合も選択肢として残す（保存時の値の取り違えを防ぐ）
+function buildSelect(name, list, current, isDisabled = false) {
+  const cur = current == null ? '' : String(current);
+  const items = list.slice();
+  if (cur !== '' && items.indexOf(cur) === -1) items.push(cur);
+  const opts = items.map(v =>
+    `<option value="${escapeHtml(v)}"${v === cur ? ' selected' : ''}>${escapeHtml(v)}</option>`).join('');
+  return `<select name="${name}" class="edit-input" ${isDisabled ? 'disabled' : ''}>${opts}</select>`;
+}
+
+// タブ切り替え処理
+document.addEventListener('DOMContentLoaded', () => {
+  const tabWorks = document.getElementById('tab-works');
+  const tabSummary = document.getElementById('tab-summary');
+  const tabMaster = document.getElementById('tab-master');
+  const tabProduct = document.getElementById('tab-product');
+  
+  const viewWorks = document.getElementById('works-view');
+  const viewSummary = document.getElementById('summary-view');
+  const viewMaster = document.getElementById('master-view');
+  const viewProduct = document.getElementById('product-view');
+
+  if (tabWorks && tabSummary && tabMaster && tabProduct) {
+    const hideAll = () => {
+      [tabWorks, tabSummary, tabMaster, tabProduct].forEach(t => t.classList.remove('active'));
+      [viewWorks, viewSummary, viewMaster, viewProduct].forEach(v => v.style.display = 'none');
+    };
+
+    tabWorks.addEventListener('click', () => {
+      hideAll();
+      tabWorks.classList.add('active');
+      viewWorks.style.display = 'block';
+    });
+
+    tabSummary.addEventListener('click', () => {
+      hideAll();
+      tabSummary.classList.add('active');
+      viewSummary.style.display = 'block';
+      if (typeof renderSummary === 'function') renderSummary();
+    });
+
+    tabMaster.addEventListener('click', () => {
+      hideAll();
+      tabMaster.classList.add('active');
+      viewMaster.style.display = 'block';
+      if (typeof renderMaster === 'function') renderMaster();
+    });
+    
+    tabProduct.addEventListener('click', () => {
+      hideAll();
+      tabProduct.classList.add('active');
+      viewProduct.style.display = 'block';
+      if (typeof renderProductBlocks === 'function') renderProductBlocks();
+    });
+  }
+});
 </script>

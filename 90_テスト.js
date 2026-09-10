@@ -70,5 +70,48 @@ function runTests() {
   assertAlmostEqual(res7.target.workSec, res7.current.workSec, "テスト7: 目標未入力(現状と同値)");
   assertAlmostEqual(res7.effectStdWorkSec, 0, "テスト7: 改善効果(0)");
 
+  const assertEqual = (actual, expected, testName) => {
+    if (actual === expected) {
+      Logger.log(`[OK] ${testName}: ${JSON.stringify(actual)}`);
+    } else {
+      Logger.log(`[NG] ${testName}: Expected ${JSON.stringify(expected)}, but got ${JSON.stringify(actual)}`);
+      passed = false;
+    }
+  };
+
+  // テスト8: C38 機械自動なのに人数1 -> 警告が出る
+  const res8 = calculateDetail({
+    '時間方式': '同時作業', '正味時間_現状': 100, '数量方式': '固定', '固定数量': 1,
+    '人数_現状': 1, '単位': '台', '作業方式': '機械自動（人は離れられる）'
+  }, 0, params);
+  assertEqual(res8.warning.indexOf('人数は0') >= 0, true, "テスト8: C38 自動化方式で人数>0の警告");
+
+  // テスト9: C38 人手なのに人数0 -> 警告が出る
+  const res9 = calculateDetail({
+    '時間方式': '同時作業', '正味時間_現状': 100, '数量方式': '固定', '固定数量': 1,
+    '人数_現状': 0, '単位': '台', '作業方式': '人手'
+  }, 0, params);
+  assertEqual(res9.warning.indexOf('人数は1以上') >= 0, true, "テスト9: C38 人手で人数0の警告");
+
+  // テスト10: 数量方式「部品の使用数」は未対応。数量1で計算し、警告を出す
+  const res10 = calculateDetail({
+    '時間方式': '同時作業', '正味時間_現状': 60, '数量方式': '部品の使用数',
+    '人数_現状': 1, '単位': '台', '作業方式': '人手'
+  }, 0, params);
+  assertAlmostEqual(formatMin(res10.current.durationSec), 1.0, "テスト10: 部品の使用数(数量1で計算)");
+  assertEqual(res10.warning.indexOf('部品の使用数') >= 0, true, "テスト10: 部品の使用数の未対応警告");
+
+  // テスト11: C18 単位が台以外は台あたり集計から外す
+  const res11 = calculateDetail({
+    '時間方式': '同時作業', '正味時間_現状': 600, '数量方式': '固定', '固定数量': 1,
+    '人数_現状': 10, '単位': '日', '作業方式': '人手'
+  }, 0, params);
+  assertEqual(res11.isPerUnit, false, "テスト11: 単位「日」は台あたり集計の対象外");
+
+  // テスト12: normalizeValue_ 比較の正規化（保存時の競合判定・履歴で使う）
+  assertEqual(normalizeValue_(6), normalizeValue_('6.0'), "テスト12: 数値6と文字列6.0は同値");
+  assertEqual(normalizeValue_(0) === normalizeValue_(''), false, "テスト12: 0と空欄は別物");
+  assertEqual(normalizeValue_(null), '', "テスト12: nullは空文字");
+
   Logger.log(passed ? "=== 全テスト合格 ===" : "=== テスト失敗あり ===");
 }

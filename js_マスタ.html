@@ -1,0 +1,184 @@
+<script>
+// =========================================
+// js_マスタ.html (S07 マスタ管理)
+// =========================================
+
+let currentMasterType = 'equipment';
+
+document.addEventListener('DOMContentLoaded', () => {
+  const selector = document.getElementById('master-selector');
+  const addBtn = document.getElementById('add-master-btn');
+  
+  if (selector) {
+    selector.addEventListener('change', (e) => {
+      currentMasterType = e.target.value;
+      renderMaster();
+    });
+  }
+  
+  if (addBtn) {
+    addBtn.addEventListener('click', () => {
+      addNewMasterRow(currentMasterType);
+    });
+  }
+});
+
+function renderMaster() {
+  const thead = document.querySelector('#master-table thead');
+  const tbody = document.querySelector('#master-table tbody');
+  if (!thead || !tbody || !appData) return;
+  
+  thead.innerHTML = '';
+  tbody.innerHTML = '';
+  
+  let dataList = [];
+  let cols = [];
+  let dataKeys = [];
+  let hintHtml = '';
+  
+  if (currentMasterType === 'equipment') {
+    hintHtml = '<div style="margin-bottom:10px; padding:10px; background:#e3f2fd; border-radius:4px;">💡 ここで登録した設備は、S02工数表の「紐付け > 設備」ボタンの選択肢として表示されます。</div>';
+    cols = ['設備ID', '設備名', '種別', '保有台数', '設置工程ID', '状態', '操作'];
+    dataKeys = ['設備ID', '設備名', '種別', '保有台数', '設置工程ID', '状態'];
+    dataList = appData.equipment || [];
+  } else if (currentMasterType === 'process') {
+    hintHtml = '<div style="margin-bottom:10px; padding:10px; background:#e3f2fd; border-radius:4px;">💡 ここで登録した工程は、S02工数表での絞り込みや集計（S03）、ブロックの所属工程として利用されます。</div>';
+    cols = ['工程ID', '工程名', '最大同時人数', '表示順', '状態', '操作'];
+    dataKeys = ['工程ID', '工程名', '最大同時人数', '表示順', '状態'];
+    dataList = appData.processes || [];
+  } else if (currentMasterType === 'group') {
+    hintHtml = '<div style="margin-bottom:10px; padding:10px; background:#e3f2fd; border-radius:4px;">💡 ここで登録した作業班は、S02工数表での並行作業のグループ分けや集計（S03）の軸として利用されます。</div>';
+    cols = ['班ID', '班名', '担当職種', '担当会社', '表示順', '状態', '操作'];
+    dataKeys = ['班ID', '班名', '担当職種', '担当会社', '表示順', '状態'];
+    dataList = appData.groups || [];
+  }
+  
+  // ヒントメッセージの挿入場所を確保するため、theadの前にtrを入れるか、コンテナ外に挿入する
+  // 既存の master-content 内の先頭にヒントを挿入
+  const contentDiv = document.getElementById('master-content');
+  const existingHint = contentDiv.querySelector('.master-hint');
+  if (existingHint) existingHint.remove();
+  
+  const hintDiv = document.createElement('div');
+  hintDiv.className = 'master-hint';
+  hintDiv.innerHTML = hintHtml;
+  contentDiv.insertBefore(hintDiv, contentDiv.firstChild);
+  
+  thead.innerHTML = `<tr>${cols.map(c => `<th>${c}</th>`).join('')}</tr>`;
+  
+  dataList.forEach((row, idx) => {
+    const tr = document.createElement('tr');
+    tr.dataset.idx = idx;
+    
+    let html = '';
+    dataKeys.forEach(key => {
+      const isId = (key.endsWith('ID') && key !== '設置工程ID');
+      const isState = (key === '状態');
+      const val = row[key] !== undefined ? row[key] : '';
+      
+      if (isId) {
+        html += `<td>${escapeHtml(val)}<input type="hidden" name="${key}" value="${escapeHtml(val)}"></td>`;
+      } else if (isState) {
+        html += `<td>${buildSelect(key, ['有効', '無効'], val)}</td>`;
+      } else if (key === '種別' && currentMasterType === 'equipment') {
+        html += `<td>${buildSelect(key, ['機械', '工具', '治具', '搬送'], val)}</td>`;
+      } else {
+        const type = (key === '保有台数' || key === '最大同時人数' || key === '表示順') ? 'number' : 'text';
+        html += `<td><input type="${type}" name="${key}" value="${escapeHtml(val)}" class="edit-input" style="width:100%;"></td>`;
+      }
+    });
+    
+    html += `<td>
+               <button class="btn-small save-master-btn" disabled>保存</button>
+             </td>`;
+    
+    tr.innerHTML = html;
+    tbody.appendChild(tr);
+    
+    // 変更検知
+    tr.querySelectorAll('.edit-input, select').forEach(input => {
+      input.addEventListener('change', () => {
+        tr.querySelector('.save-master-btn').disabled = false;
+      });
+    });
+    
+    // 保存ボタン
+    tr.querySelector('.save-master-btn').addEventListener('click', () => saveMasterRow(tr, currentMasterType, row));
+  });
+}
+
+function addNewMasterRow(type) {
+  const tbody = document.querySelector('#master-table tbody');
+  const tr = document.createElement('tr');
+  
+  let newRow = {};
+  let html = '';
+  
+  if (type === 'equipment') {
+    newRow = { '設備ID': '', '設備名': '新規設備', '種別': '機械', '保有台数': 1, '設置工程ID': '', '状態': '有効' };
+    html = `
+      <td>(自動採番)<input type="hidden" name="設備ID" value=""></td>
+      <td><input type="text" name="設備名" value="${newRow['設備名']}" class="edit-input" style="width:100%;"></td>
+      <td>${buildSelect('種別', ['機械', '工具', '治具', '搬送'], newRow['種別'])}</td>
+      <td><input type="number" name="保有台数" value="${newRow['保有台数']}" class="edit-input" style="width:100%;"></td>
+      <td><input type="text" name="設置工程ID" value="" class="edit-input" style="width:100%;"></td>
+      <td>${buildSelect('状態', ['有効', '無効'], newRow['状態'])}</td>
+    `;
+  } else if (type === 'process') {
+    newRow = { '工程ID': '', '工程名': '新規工程', '最大同時人数': 1, '表示順': 99, '状態': '有効' };
+    html = `
+      <td>(自動採番)<input type="hidden" name="工程ID" value=""></td>
+      <td><input type="text" name="工程名" value="${newRow['工程名']}" class="edit-input" style="width:100%;"></td>
+      <td><input type="number" name="最大同時人数" value="${newRow['最大同時人数']}" class="edit-input" style="width:100%;"></td>
+      <td><input type="number" name="表示順" value="${newRow['表示順']}" class="edit-input" style="width:100%;"></td>
+      <td>${buildSelect('状態', ['有効', '無効'], newRow['状態'])}</td>
+    `;
+  } else if (type === 'group') {
+    newRow = { '班ID': '', '班名': '新規班', '担当職種': '', '担当会社': '', '表示順': 99, '状態': '有効' };
+    html = `
+      <td>(自動採番)<input type="hidden" name="班ID" value=""></td>
+      <td><input type="text" name="班名" value="${newRow['班名']}" class="edit-input" style="width:100%;"></td>
+      <td><input type="text" name="担当職種" value="" class="edit-input" style="width:100%;"></td>
+      <td><input type="text" name="担当会社" value="" class="edit-input" style="width:100%;"></td>
+      <td><input type="number" name="表示順" value="${newRow['表示順']}" class="edit-input" style="width:100%;"></td>
+      <td>${buildSelect('状態', ['有効', '無効'], newRow['状態'])}</td>
+    `;
+  }
+  
+  html += `<td><button class="btn-small save-master-btn">追加</button></td>`;
+  tr.innerHTML = html;
+  tbody.insertBefore(tr, tbody.firstChild);
+  
+  tr.querySelector('.save-master-btn').addEventListener('click', () => saveMasterRow(tr, type, newRow, true));
+}
+
+async function saveMasterRow(tr, type, baseObj, isNew = false) {
+  const btn = tr.querySelector('.save-master-btn');
+  btn.textContent = '保存中...';
+  btn.disabled = true;
+  
+  const newObj = Object.assign({}, baseObj);
+  tr.querySelectorAll('input, select').forEach(input => {
+    if (input.name) {
+      newObj[input.name] = input.type === 'number' ? Number(input.value) : input.value;
+    }
+  });
+  
+  showStatus('マスタを保存しています...');
+  const res = await callServer('saveMasterData', type, newObj);
+  
+  if (res.ok) {
+    showStatus('マスタ保存完了');
+    // 全体データをリロードして再描画
+    const reloadRes = await callServer('getAppData');
+    if (reloadRes.ok) {
+      appData = reloadRes.data;
+      renderMaster();
+    }
+  } else {
+    alert('エラー: ' + res.message);
+    btn.textContent = isNew ? '追加' : '保存';
+    btn.disabled = false;
+  }
+}
+</script>
