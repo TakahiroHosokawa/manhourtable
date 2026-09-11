@@ -15,8 +15,12 @@ function renderSummary() {
   // 計算パラメータ準備
   const allowanceRate = appData.product['余裕率'] || 15;
   
+  // 全体サマリ用
   let totalWorkSec = 0;
   let totalDurationSec = 0;
+  let totalTargetWorkSec = 0;
+  let totalTargetDurationSec = 0;
+
   let totalPersonWorkSec = 0;
   let totalMachineDurationSec = 0;
   let totalAutoDurationSec = 0;
@@ -25,136 +29,198 @@ function renderSummary() {
   // 台あたりと台あたり以外を分けるための器
   const byUnit = {};
   
-  // 各種集計用の器 (名称で集約)
-  const byProcess = {};
-  const byGroup = {};
-  const byWork = {};
-  const byCategory = {};
-  const byMethod = {};
-  const byAccuracy = {};
-  const byRole = {}; // 担当別 (職種・会社)
+  // 各種集計用の器 (名称で集約) { wSec, tWSec, dSec, tDSec }
+  const byProcess = {};   // 大工程別
+  const byBlock = {};     // 組立ブロック別
+  const byGroup = {};     // 班別
+  const byCategory = {};  // 区分別
+  const byMethod = {};    // 作業方式別
+  const byAccuracy = {};  // 確度別
+  const byRole = {};      // 担当別 (職種)
 
   // マスタを辞書化
   const processMap = {};
-  if (appData.processes) {
-    appData.processes.forEach(p => processMap[p['工程ID']] = p['工程名'] || p['工程ID']);
-  }
+  if (appData.processes) appData.processes.forEach(p => processMap[p['工程ID']] = p['工程名'] || p['工程ID']);
   const groupMap = {};
-  if (appData.groups) {
-    appData.groups.forEach(g => groupMap[g['班ID']] = g);
-  }
+  if (appData.groups) appData.groups.forEach(g => groupMap[g['班ID']] = g);
   const workMap = {};
-  validWorks.forEach(w => {
-    workMap[w['作業ID']] = w;
-  });
+  validWorks.forEach(w => workMap[w['作業ID']] = w);
+
+  // 集計値の加算ユーティリティ
+  const addStats = (obj, key, wSec, tWSec, dSec, tDSec) => {
+    if (!obj[key]) obj[key] = { wSec: 0, tWSec: 0, dSec: 0, tDSec: 0 };
+    obj[key].wSec += wSec;
+    obj[key].tWSec += tWSec;
+    obj[key].dSec += dSec;
+    obj[key].tDSec += tDSec;
+  };
 
   validDetails.forEach(detail => {
     const calc = calculateDetailClient(detail, allowanceRate, paramMap);
     const wSec = calc.current.workSec || 0;
     const dSec = calc.current.durationSec || 0;
+    const tWSec = calc.target.workSec || 0;
+    const tDSec = calc.target.durationSec || 0;
     
     const unit = calc.unit || '台';
-    if (!byUnit[unit]) byUnit[unit] = { workSec: 0, durationSec: 0 };
+    if (!byUnit[unit]) byUnit[unit] = { workSec: 0, durationSec: 0, tWorkSec: 0, tDurationSec: 0 };
     byUnit[unit].workSec += wSec;
     byUnit[unit].durationSec += dSec;
+    byUnit[unit].tWorkSec += tWSec;
+    byUnit[unit].tDurationSec += tDSec;
     
-    // 集計は単位が「台」のものを対象（要件: 単位＝台 のみ台あたり集計 C18）
+    // 集計は単位が「台」のものを対象（C18）
     if (unit !== '台') return;
 
     totalWorkSec += wSec;
     totalDurationSec += dSec;
+    totalTargetWorkSec += tWSec;
+    totalTargetDurationSec += tDSec;
     
     // C39 人手工数と機械時間の分離
     const persons = Number(detail['人数_現状'] || 0);
-    if (persons >= 1) {
-      totalPersonWorkSec += wSec;
-    }
+    if (persons >= 1) totalPersonWorkSec += wSec;
+    
     const method = detail['作業方式'] || '';
     if (['機械自動（人は離れられる）', '自動搬送'].includes(method)) {
       totalAutoDurationSec += dSec;
       totalMachineDurationSec += dSec;
     } else if (method === '機械操作') {
-      // 操作を伴うものも機械時間としてカウントするかは運用によるが、
-      // 専有する行の所要合計とあるので一旦加算
       totalMachineDurationSec += dSec;
     }
+    if (method === '機械自動・監視要') totalWatchWorkSec += wSec;
     
-    // 監視率用
-    if (method === '機械自動・監視要') {
-      totalWatchWorkSec += wSec;
-    }
-    
-    // 区分別
-    const category = detail['区分'] || '未設定';
-    byCategory[category] = (byCategory[category] || 0) + wSec;
-    
-    // 作業方式別
-    const m = detail['作業方式'] || '未設定';
-    byMethod[m] = (byMethod[m] || 0) + wSec;
-    
-    // 確度別
-    const acc = detail['確度'] || '未設定';
-    byAccuracy[acc] = (byAccuracy[acc] || 0) + wSec;
+    // 各軸別集計
+    addStats(byCategory, detail['区分'] || '未設定', wSec, tWSec, dSec, tDSec);
+    addStats(byMethod, detail['作業方式'] || '未設定', wSec, tWSec, dSec, tDSec);
+    addStats(byAccuracy, detail['確度'] || '未設定', wSec, tWSec, dSec, tDSec);
     
     // 作業（親）属性
     const work = workMap[detail['作業ID']];
     if (work) {
-      const processName = processMap[work['工程ID']] || work['工程ID'] || '未設定';
-      byProcess[processName] = (byProcess[processName] || 0) + wSec;
+      // S03 大工程(ステーション)別。小工程に大工程がない場合は親作業のものを使用するか工程IDをフォールバック
+      const processName = detail['大工程'] || work['大工程'] || processMap[work['工程ID']] || '未設定';
+      addStats(byProcess, processName, wSec, tWSec, dSec, tDSec);
       
+      const blockName = work['作業名'] || '未設定';
+      addStats(byBlock, blockName, wSec, tWSec, dSec, tDSec);
+
       const g = groupMap[work['班ID']];
       const groupName = g ? (g['班名'] || work['班ID']) : (work['班ID'] || '未設定');
-      byGroup[groupName] = (byGroup[groupName] || 0) + wSec;
+      addStats(byGroup, groupName, wSec, tWSec, dSec, tDSec);
       
       const roleName = g && g['担当職種'] ? g['担当職種'] : '未設定';
-      byRole[roleName] = (byRole[roleName] || 0) + wSec;
-
-      const workName = work['作業名'] || '未設定';
-      byWork[workName] = (byWork[workName] || 0) + wSec;
+      addStats(byRole, roleName, wSec, tWSec, dSec, tDSec);
     }
   });
 
-  // 自動化率・監視率の計算
   const autoRate = totalDurationSec > 0 ? (totalAutoDurationSec / totalDurationSec) * 100 : 0;
   const watchRate = totalWorkSec > 0 ? (totalWatchWorkSec / totalWorkSec) * 100 : 0;
+  const effectWork = totalWorkSec - totalTargetWorkSec;
   
   // HTML生成
-  let html = `<h3>全体サマリ (単位: 台あたり)</h3>`;
-  html += `<ul>
-    <li>総工数: <b>${formatMin(totalWorkSec)}</b> 人・分</li>
-    <li>総所要: <b>${formatMin(totalDurationSec)}</b> 分</li>
-    <li>人手工数: <b>${formatMin(totalPersonWorkSec)}</b> 人・分</li>
-    <li>機械時間(参考): <b>${formatMin(totalMachineDurationSec)}</b> 分</li>
-    <li>自動化率: <b>${autoRate.toFixed(1)}</b> %</li>
-    <li>監視率: <b>${watchRate.toFixed(1)}</b> %</li>
-  </ul>`;
+  let html = `<div style="display:flex; justify-content:space-between; align-items:flex-end; margin-bottom:15px;">
+    <h3>全体サマリ (単位: 台あたり)</h3>
+    <div style="font-size:0.9em; color:#555;">対象製品: <b>${appData.product['型式名']} (${appData.product['製品コード']})</b></div>
+  </div>`;
   
-  const buildTable = (title, dataObj) => {
-    let t = `<div class="summary-box"><h4>${title}</h4><table class="summary-table"><thead><tr><th>項目</th><th>工数(人・分)</th><th>構成比</th></tr></thead><tbody>`;
-    // 値で降順ソート
-    const sorted = Object.entries(dataObj).sort((a, b) => b[1] - a[1]);
+  html += `<div style="display:flex; gap:15px; margin-bottom:20px;">
+    <div style="flex:1; background:#e3f2fd; padding:15px; border-radius:6px; border:1px solid #bbdefb;">
+      <h4 style="margin:0 0 10px 0; color:#1565c0;">現状と目標・改善効果</h4>
+      <table style="width:100%; border:none; background:transparent;">
+        <tr><td style="border:none;">総工数 (現状)</td><td style="border:none; text-align:right;"><b>${formatMin(totalWorkSec)}</b> 人・分</td></tr>
+        <tr><td style="border:none;">総工数 (目標)</td><td style="border:none; text-align:right; color:#2e7d32;"><b>${formatMin(totalTargetWorkSec)}</b> 人・分</td></tr>
+        <tr><td style="border:none; border-top:1px dashed #90caf9; padding-top:5px;">改善効果</td><td style="border:none; border-top:1px dashed #90caf9; padding-top:5px; text-align:right; font-weight:bold; color:#d32f2f;">▲ ${formatMin(effectWork)} 人・分</td></tr>
+        <tr><td style="border:none; padding-top:10px;">総所要 (現状)</td><td style="border:none; text-align:right; padding-top:10px;"><b>${formatMin(totalDurationSec)}</b> 分</td></tr>
+      </table>
+    </div>
+    <div style="flex:1; background:#f3e5f5; padding:15px; border-radius:6px; border:1px solid #e1bee7;">
+      <h4 style="margin:0 0 10px 0; color:#6a1b9a;">自動化・人手比率</h4>
+      <table style="width:100%; border:none; background:transparent;">
+        <tr><td style="border:none;">人手工数</td><td style="border:none; text-align:right;"><b>${formatMin(totalPersonWorkSec)}</b> 人・分</td></tr>
+        <tr><td style="border:none;">機械時間 (参考)</td><td style="border:none; text-align:right;"><b>${formatMin(totalMachineDurationSec)}</b> 分</td></tr>
+        <tr><td style="border:none;">自動化率 (時間比)</td><td style="border:none; text-align:right;"><b>${autoRate.toFixed(1)}</b> %</td></tr>
+        <tr><td style="border:none;">監視率 (工数比)</td><td style="border:none; text-align:right;"><b>${watchRate.toFixed(1)}</b> %</td></tr>
+      </table>
+    </div>
+  </div>`;
+  
+  // テーブル生成ヘルパー
+  const buildTable = (title, dataObj, showTarget = true) => {
+    let t = `<div class="summary-box">
+      <h4 style="margin:0 0 5px 0; border-bottom:2px solid #ccc; padding-bottom:5px;">${title}</h4>
+      <table class="summary-table">
+        <thead>
+          <tr>
+            <th>項目</th>
+            <th>工数(現)</th>
+            ${showTarget ? '<th>目標</th><th>改善</th>' : ''}
+            <th>構成比</th>
+          </tr>
+        </thead>
+        <tbody>`;
+    // 現状工数で降順ソート
+    const sorted = Object.entries(dataObj).sort((a, b) => b[1].wSec - a[1].wSec);
     for (const [key, val] of sorted) {
-      const ratio = totalWorkSec > 0 ? (val / totalWorkSec) * 100 : 0;
-      t += `<tr><td>${escapeHtml(key)}</td><td>${formatMin(val)}</td><td>${ratio.toFixed(1)}%</td></tr>`;
+      const ratio = totalWorkSec > 0 ? (val.wSec / totalWorkSec) * 100 : 0;
+      const effect = val.wSec - val.tWSec;
+      t += `<tr>
+        <td>${escapeHtml(key)}</td>
+        <td>${formatMin(val.wSec)}</td>
+        ${showTarget ? `<td style="color:#2e7d32;">${formatMin(val.tWSec)}</td><td style="color:#d32f2f;">${effect > 0 ? '▲'+formatMin(effect) : '-'}</td>` : ''}
+        <td>${ratio.toFixed(1)}%</td>
+      </tr>`;
     }
     t += `</tbody></table></div>`;
     return t;
   };
   
+  html += `<h3 style="margin-top:30px;">詳細サマリ</h3>`;
   html += `<div style="display:flex; flex-wrap:wrap; gap: 20px;">`;
-  html += buildTable('工程別', byProcess);
-  html += buildTable('班別', byGroup);
-  html += buildTable('作業別 (上位のみ)', Object.fromEntries(Object.entries(byWork).sort((a,b)=>b[1]-a[1]).slice(0, 10))); // 多すぎる場合を考慮
-  html += buildTable('担当(職種)別', byRole);
-  html += buildTable('区分別', byCategory);
-  html += buildTable('作業方式別', byMethod);
-  html += buildTable('確度別', byAccuracy);
+  html += buildTable('組立ブロック別', byBlock);
+  html += buildTable('大工程(ステーション)別', byProcess);
+  html += buildTable('作業班別', byGroup);
+  html += buildTable('担当(職種)別', byRole, false);
+  html += buildTable('区分別', byCategory, false);
+  html += buildTable('作業方式別', byMethod, false);
+  
+  // 確度別割合 (マスタの完成度)
+  const renderAccuracyBar = () => {
+    let barHtml = `<div class="summary-box" style="width:100%;">
+      <h4 style="margin:0 0 5px 0; border-bottom:2px solid #ccc; padding-bottom:5px;">確度別割合 (マスタ完成度)</h4>`;
+    const accColors = { '確定': '#4caf50', '暫定': '#ffeb3b', '未観測': '#f44336', '未設定': '#9e9e9e' };
+    let barSegments = '';
+    let legend = '';
+    
+    for (const [key, val] of Object.entries(byAccuracy)) {
+      const ratio = totalWorkSec > 0 ? (val.wSec / totalWorkSec) * 100 : 0;
+      if (ratio > 0) {
+        const color = accColors[key] || accColors['未設定'];
+        barSegments += `<div style="width:${ratio}%; background-color:${color}; height:24px;" title="${key}: ${ratio.toFixed(1)}%"></div>`;
+        legend += `<span style="margin-right:15px;"><span style="display:inline-block; width:12px; height:12px; background:${color}; margin-right:4px;"></span>${key} (${ratio.toFixed(1)}%)</span>`;
+      }
+    }
+    barHtml += `<div style="display:flex; width:100%; border:1px solid #ccc; border-radius:4px; overflow:hidden; margin:10px 0;">${barSegments}</div>`;
+    barHtml += `<div>${legend}</div></div>`;
+    return barHtml;
+  };
+  
+  html += renderAccuracyBar();
   html += `</div>`;
   
-  html += `<h3>単位別 (台あたり以外含む)</h3>`;
-  html += `<table class="summary-table"><thead><tr><th>単位</th><th>工数(人・分)</th><th>所要(分)</th></tr></thead><tbody>`;
+  html += `<h3 style="margin-top:30px;">単位別 (台あたり以外含む)</h3>`;
+  html += `<table class="summary-table" style="width:auto; min-width:400px;">
+    <thead>
+      <tr><th>単位</th><th>工数(現状)</th><th>目標工数</th><th>所要(現状)</th></tr>
+    </thead>
+    <tbody>`;
   for (const [unit, val] of Object.entries(byUnit)) {
-    html += `<tr><td>${escapeHtml(unit)}</td><td>${formatMin(val.workSec)}</td><td>${formatMin(val.durationSec)}</td></tr>`;
+    html += `<tr>
+      <td>${escapeHtml(unit)}</td>
+      <td>${formatMin(val.workSec)}</td>
+      <td style="color:#2e7d32;">${formatMin(val.tWorkSec)}</td>
+      <td>${formatMin(val.durationSec)}</td>
+    </tr>`;
   }
   html += `</tbody></table>`;
   
@@ -164,25 +230,29 @@ function renderSummary() {
 
 <style>
 .summary-box {
-  min-width: 250px;
+  flex: 1;
+  min-width: 300px;
 }
 .summary-table {
-  border-collapse: collapse;
   width: 100%;
-}
   border-collapse: collapse;
   margin-bottom: 20px;
+  background: #fff;
 }
 .summary-table th, .summary-table td {
   border: 1px solid #ccc;
-  padding: 5px 10px;
+  padding: 8px 10px;
   text-align: right;
+  font-size: 13px;
 }
 .summary-table th {
   background-color: #f5f5f5;
   text-align: center;
+  font-weight: normal;
+  color: #333;
 }
 .summary-table td:first-child {
   text-align: left;
+  background-color: #fafafa;
 }
 </style>

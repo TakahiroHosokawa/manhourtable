@@ -45,15 +45,15 @@ function getAppData() {
     }
 
     // 製品に紐づくデータだけフィルタ
-    const works = getTableData_(SHEET_NAMES.WORK, ss).filter(w => w['製品ID'] === currentProduct['製品ID']);
+    const works = currentProduct ? getTableData_(SHEET_NAMES.WORK, ss).filter(w => w['製品ID'] === currentProduct['製品ID']) : [];
     const workIds = works.map(w => w['作業ID']);
-    const details = getTableData_(SHEET_NAMES.WORK_DETAIL, ss).filter(d => workIds.includes(d['作業ID']));
+    const details = currentProduct ? getTableData_(SHEET_NAMES.WORK_DETAIL, ss).filter(d => workIds.includes(d['作業ID'])) : [];
     const detailIds = details.map(d => d['内訳ID']);
 
     const data = {
-      product: currentProduct,
+      product: currentProduct || null,
       allProducts: allProducts, // プルダウン用
-      params: getTableData_(SHEET_NAMES.PARAM, ss).filter(p => p['製品ID'] === currentProduct['製品ID']),
+      params: currentProduct ? getTableData_(SHEET_NAMES.PARAM, ss).filter(p => p['製品ID'] === currentProduct['製品ID']) : [],
       processes: getTableData_(SHEET_NAMES.PROCESS, ss), // マスタは全製品共通
       groups: getTableData_(SHEET_NAMES.GROUP, ss),      // マスタは全製品共通
       equipment: getTableData_(SHEET_NAMES.EQUIPMENT, ss), // マスタは全製品共通
@@ -61,9 +61,9 @@ function getAppData() {
       details: details,
       choices: getTableData_(SHEET_NAMES.CHOICE, ss),
       parts: getTableData_(SHEET_NAMES.PART, ss),
-      productParts: getTableData_(SHEET_NAMES.PRODUCT_PART, ss).filter(p => p['製品ID'] === currentProduct['製品ID']),
+      productParts: currentProduct ? getTableData_(SHEET_NAMES.PRODUCT_PART, ss).filter(p => p['製品ID'] === currentProduct['製品ID']) : [],
       partUsages: getTableData_(SHEET_NAMES.PART_USAGE, ss),
-      versions: getTableData_(SHEET_NAMES.VERSION, ss).filter(v => v['製品ID'] === currentProduct['製品ID'])
+      versions: currentProduct ? getTableData_(SHEET_NAMES.VERSION, ss).filter(v => v['製品ID'] === currentProduct['製品ID']) : []
     };
     return JSON.stringify({ ok: true, data: data });
   } catch (e) {

@@ -44,6 +44,7 @@ function calculateDetailClient(row, allowanceRate, parameters) {
   };
 
   const current = calcSingle(false);
+  const target = calcSingle(true);
   
   // C38: 作業方式と人数の整合検証
   const warnings = [];
@@ -62,8 +63,10 @@ function calculateDetailClient(row, allowanceRate, parameters) {
   return {
     unit: row['単位'] || '台',
     current: current,
-    warning: warningMessage
-    // (目標値や効果は省略。画面UI上で利用する現在値のみ抽出)
+    target: target,
+    warning: warningMessage,
+    effectWorkSec: current.workSec - target.workSec,
+    effectStdWorkSec: current.stdWorkSec - target.stdWorkSec
   };
 }
 </script>

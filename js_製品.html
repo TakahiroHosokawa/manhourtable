@@ -103,55 +103,79 @@ function initProductControls() {
   const cloneProductBtn = document.getElementById('clone-product-btn');
     
   if (selector && appData && appData.allProducts) {
-    // セレクトボックスの選択肢をサーバーから取得した製品一覧で上書き
-    selector.innerHTML = appData.allProducts.map(p => 
-      `<option value="${escapeHtml(p['製品ID'])}" ${p['製品ID'] === appData.product['製品ID'] ? 'selected' : ''}>
-          ${escapeHtml(p['型式名'])} (${escapeHtml(p['製品コード'])})
-         </option>`
-    ).join('');
-    
-    // 切り替えイベント
-    // リスナーの重複登録を防ぐため、一度クローンして再配置
-    const newSelector = selector.cloneNode(true);
-    selector.parentNode.replaceChild(newSelector, selector);
-    newSelector.addEventListener('change', async (e) => {
-      const selectedId = e.target.value;
-      if (selectedId === appData.product['製品ID']) return;
+    if (appData.allProducts.length === 0) {
+      selector.innerHTML = '<option value="">製品が登録されていません</option>';
+      selector.disabled = true;
+    } else {
+      // セレクトボックスの選択肢をサーバーから取得した製品一覧で上書き
+      selector.innerHTML = appData.allProducts.map(p => 
+        `<option value="${escapeHtml(p['製品ID'])}" ${appData.product && p['製品ID'] === appData.product['製品ID'] ? 'selected' : ''}>
+            ${escapeHtml(p['型式名'])} (${escapeHtml(p['製品コード'])})
+           </option>`
+      ).join('');
+      selector.disabled = false;
       
-      showStatus('製品を切り替えています...');
-      const res = await callServer('switchProduct', selectedId);
-      if (res.ok) {
-        const reloadRes = await callServer('getAppData');
-        if (reloadRes.ok) {
-          appData = reloadRes.data;
-          appData.params.forEach(p => paramMap[p['パラメータID']] = p['値']);
-          renderProductBlocks();
-          // 他の画面の再描画が必要な場合はリロードするか各関数を呼ぶ
-          alert('製品を切り替えました。\nS02工数表などのデータが変更されています。');
+      // 切り替えイベント
+      const newSelector = selector.cloneNode(true);
+      selector.parentNode.replaceChild(newSelector, selector);
+      newSelector.addEventListener('change', async (e) => {
+        const selectedId = e.target.value;
+        if (appData.product && selectedId === appData.product['製品ID']) return;
+        
+        showStatus('製品を切り替えています...');
+        const res = await callServer('switchProduct', selectedId);
+        if (res.ok) {
+          const reloadRes = await callServer('getAppData');
+          if (reloadRes.ok) {
+            appData = reloadRes.data;
+            appData.params.forEach(p => paramMap[p['パラメータID']] = p['値']);
+            renderProductBlocks();
+            alert('製品を切り替えました。\nS02工数表などのデータが変更されています。');
+          }
         }
-      }
-    });
+      });
+    }
   }
   
-  if (cloneProductBtn && appData && appData.product) {
+  if (cloneProductBtn) {
     const newCloneBtn = cloneProductBtn.cloneNode(true);
     cloneProductBtn.parentNode.replaceChild(newCloneBtn, cloneProductBtn);
+    
+    // 空の場合は「新規作成」、ある場合は「複製して新規作成」にする
+    if (appData && appData.allProducts && appData.allProducts.length === 0) {
+      newCloneBtn.textContent = '製品を新規登録する';
+      newCloneBtn.style.backgroundColor = '#ff9800';
+      newCloneBtn.style.color = 'white';
+    } else {
+      newCloneBtn.textContent = '製品を複製して新規作成';
+      newCloneBtn.style.backgroundColor = '';
+      newCloneBtn.style.color = '';
+    }
+
     newCloneBtn.addEventListener('click', async () => {
-      const currentCode = appData.product['製品コード'] || 'MP';
-      const newCode = prompt(`新しい製品コードを入力してください\n(現在の型式: ${currentCode})`, currentCode + '-NEW');
+      let currentCode = 'MP';
+      let currentName = '新規モデル';
+      if (appData && appData.product) {
+        currentCode = appData.product['製品コード'] || 'MP';
+        currentName = appData.product['型式名'] + ' 派生モデル';
+      }
+
+      const newCode = prompt(`新しい製品コードを入力してください\n(現在の型式: ${currentCode})`, currentCode + (appData.product ? '-NEW' : '2500'));
       if (!newCode) return;
       
-      const newName = prompt('新しい型式名を入力してください', appData.product['型式名'] + ' 派生モデル');
+      const newName = prompt('新しい型式名を入力してください', currentName);
       if (!newName) return;
       
-      showStatus('製品を丸ごと複製しています（約10〜20秒かかります）...');
+      showStatus('製品を作成しています（約10〜20秒かかります）...');
+      // 新規作成でもcloneProductを利用。元がない場合は単なる新規登録として動作させるようバックエンドを改修済
       const res = await callServer('cloneProduct', newCode, newName);
       if (res.ok) {
-        alert('製品の複製が完了し、新しい製品に切り替わりました。');
+        alert('製品の作成が完了し、新しい製品に切り替わりました。');
         const reloadRes = await callServer('getAppData');
         if (reloadRes.ok) {
           appData = reloadRes.data;
-          appData.params.forEach(p => paramMap[p['パラメータID']] = p['値']);
+          if(appData.params) appData.params.forEach(p => paramMap[p['パラメータID']] = p['値']);
+          initProductControls();
           renderProductBlocks();
         }
       } else {
@@ -162,6 +186,10 @@ function initProductControls() {
 }
 
 function addNewBlockRow() {
+  if (!appData.product) {
+    alert('先に製品を登録・選択してください。');
+    return;
+  }
   const tbody = document.querySelector('#block-table tbody');
   const tr = document.createElement('tr');
   
