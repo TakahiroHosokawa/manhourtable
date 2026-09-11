@@ -165,6 +165,79 @@ function saveWorkDetail(newRow, baseRow) {
   }
 }
 
+// 作業内訳の一括保存（順序変更や一括編集用）
+function saveMultipleWorkDetails(rowsToUpdate) {
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(20000);
+    const ss = SpreadsheetApp.openById(PropertiesService.getScriptProperties().getProperty('SPREADSHEET_ID'));
+    const sheet = ss.getSheetByName(SHEET_NAMES.WORK_DETAIL);
+    const data = sheet.getDataRange().getValues();
+    const headers = data[0];
+    const idIndex = headers.indexOf('内訳ID');
+    
+    const now = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd HH:mm:ss');
+    const user = Session.getActiveUser().getEmail();
+    let updatedCount = 0;
+    const historyEntries = [];
+
+    // IDごとに現在の行インデックスとデータをマップ化
+    const rowMap = {};
+    for (let i = 1; i < data.length; i++) {
+      rowMap[data[i][idIndex]] = { rowIndex: i, rowData: data[i] };
+    }
+
+    rowsToUpdate.forEach(({ newRow, baseRow }) => {
+      const existing = rowMap[newRow['内訳ID']];
+      if (!existing) return; // 新規追加は個別保存機能で行う前提
+      
+      const currentRow = existing.rowData;
+      let conflict = false;
+      const changes = [];
+
+      headers.forEach((h, colIndex) => {
+        if (['作成日時', '作成者', '更新日時', '更新者'].includes(h)) return;
+        const currentVal = normalizeValue_(currentRow[colIndex]);
+        const baseVal = normalizeValue_(baseRow[h]);
+        const newVal = normalizeValue_(newRow[h]);
+
+        if (currentVal !== baseVal && currentVal !== newVal) {
+          conflict = true;
+        } else if (newRow[h] !== undefined && currentVal !== newVal) {
+          changes.push({ field: h, oldValue: currentVal, newValue: newVal });
+          currentRow[colIndex] = newRow[h];
+        }
+      });
+
+      if (!conflict && changes.length > 0) {
+        currentRow[headers.indexOf('更新日時')] = now;
+        currentRow[headers.indexOf('更新者')] = user;
+        
+        sheet.getRange(existing.rowIndex + 1, 1, 1, headers.length).setValues([currentRow]);
+        updatedCount++;
+        
+        const operation = changes.some(c => c.field === '順序' || c.field === '作業ID') ? '順序・移動' : '変更';
+        changes.forEach(c => {
+          historyEntries.push([now, user, productIdOfDetail_(newRow['内訳ID']), '作業内訳', newRow['内訳ID'], operation, c.field, c.oldValue, c.newValue]);
+        });
+      }
+    });
+
+    if (historyEntries.length > 0) {
+      const hSheet = ss.getSheetByName(SHEET_NAMES.HISTORY);
+      const seq = Math.max(hSheet.getLastRow() - 1, 0);
+      const hRows = historyEntries.map((c, i) => ['H-' + (seq + i + 1), c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7], c[8]]);
+      hSheet.getRange(hSheet.getLastRow() + 1, 1, hRows.length, HEADERS.HISTORY.length).setValues(hRows);
+    }
+
+    return { ok: true, message: `${updatedCount}件の作業内訳を保存しました` };
+  } catch (e) {
+    return { ok: false, message: e.toString() };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
 // 値の比較・履歴用の正規化。0 と空欄、数値と文字列の「6」と「6.0」を取り違えないようにする
 function normalizeValue_(v) {
   if (v === null || v === undefined || v === '') return '';

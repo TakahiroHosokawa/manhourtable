@@ -23,6 +23,12 @@ document.addEventListener('DOMContentLoaded', async () => {
       renderTable();
     });
   }
+
+  // 一括保存ボタン
+  const saveAllBtn = document.getElementById('save-all-btn');
+  if (saveAllBtn) {
+    saveAllBtn.addEventListener('click', saveAllRows);
+  }
 });
 
 // ドラッグ&ドロップ用の変数
@@ -287,18 +293,24 @@ function handleDragLeave(e) {
 function handleDrop(e) {
   e.stopPropagation();
   this.style.borderTop = '';
-  if (draggedRow !== this && this.parentNode === draggedRow.parentNode) {
-    const tbody = this.parentNode;
-    const allRows = Array.from(tbody.querySelectorAll('.detail-row'));
+  if (draggedRow !== this) {
+    const targetTbody = this.closest('tbody.work-group');
+    const sourceTbody = draggedRow.closest('tbody.work-group');
+
+    const allRows = Array.from(targetTbody.querySelectorAll('.detail-row'));
     const draggedIndex = allRows.indexOf(draggedRow);
     const targetIndex = allRows.indexOf(this);
 
-    if (draggedIndex < targetIndex) {
+    if (draggedIndex > -1 && draggedIndex < targetIndex) {
       this.after(draggedRow);
     } else {
       this.before(draggedRow);
     }
-    recalcOrder(tbody);
+
+    recalcOrder(targetTbody);
+    if (sourceTbody !== targetTbody) {
+      recalcOrder(sourceTbody);
+    }
   }
   return false;
 }
@@ -314,16 +326,75 @@ document.addEventListener('dragend', (e) => {
 // 順序の再計算と変更マーク
 function recalcOrder(tbody) {
   const rows = tbody.querySelectorAll('.detail-row');
+  const workId = tbody.dataset.workId;
   let order = 10;
   rows.forEach(tr => {
+    // 中工程（親）が変わった場合の反映用にdatasetを更新
+    if (tr.dataset.currentWorkId !== workId) {
+      tr.dataset.currentWorkId = workId;
+      tr.classList.add('changed-parent');
+    }
+
     const input = tr.querySelector('input[name="順序"]');
     if (input && Number(input.value) !== order) {
       input.value = order;
       input.classList.add('changed');
+    }
+    
+    if (tr.classList.contains('changed-parent') || (input && input.classList.contains('changed'))) {
       const btn = tr.querySelector('.save-btn');
       if (btn) btn.disabled = false;
     }
     order += 10;
   });
+}
+
+// 一括保存処理 (変更があった行をまとめて送信)
+async function saveAllRows() {
+  const table = document.querySelector('#works-table');
+  const rows = table.querySelectorAll('.detail-row');
+  const rowsToUpdate = [];
+
+  rows.forEach(tr => {
+    const hasChanges = Array.from(tr.querySelectorAll('.edit-input')).some(i => i.classList.contains('changed')) || tr.classList.contains('changed-parent');
+    if (hasChanges && tr.dataset.baseRow) {
+      const baseDetail = JSON.parse(tr.dataset.baseRow);
+      const newRow = Object.assign({}, baseDetail);
+      tr.querySelectorAll('.edit-input').forEach(input => {
+        newRow[input.name] = (input.type === 'number' && input.value !== '') ? Number(input.value) : input.value;
+      });
+      // 親要素が変わっている場合は親のIDを適用
+      if (tr.dataset.currentWorkId) {
+        newRow['作業ID'] = tr.dataset.currentWorkId;
+      }
+      rowsToUpdate.push({ newRow, baseRow: baseDetail, tr });
+    }
+  });
+
+  if (rowsToUpdate.length === 0) {
+    alert('保存する変更がありません。');
+    return;
+  }
+
+  showStatus(`一括保存中（${rowsToUpdate.length}件）...`);
+  const btn = document.getElementById('save-all-btn');
+  if (btn) btn.disabled = true;
+
+  const dataToSend = rowsToUpdate.map(r => ({ newRow: r.newRow, baseRow: r.baseRow }));
+  const res = await callServer('saveMultipleWorkDetails', dataToSend);
+
+  if (res.ok) {
+    alert(res.message);
+    const reloadRes = await callServer('getAppData');
+    if (reloadRes.ok) {
+      appData = reloadRes.data;
+      appData.params.forEach(p => paramMap[p['パラメータID']] = p['値']);
+      renderTable();
+    }
+  } else {
+    alert('保存エラー: ' + res.message);
+  }
+  
+  if (btn) btn.disabled = false;
 }
 </script>
