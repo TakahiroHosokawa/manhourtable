@@ -27,7 +27,23 @@ function showStatus(msg, isError = false) {
   const el = document.getElementById('status-message');
   el.textContent = msg;
   el.style.color = isError ? '#ff7b7b' : '#ffeb3b';
-  if (!isError) setTimeout(() => { el.textContent = ''; }, 3000);
+  
+  // 画面中央のローディングオーバーレイ制御
+  const overlay = document.getElementById('loading-overlay');
+  const overlayMsg = document.getElementById('loading-message');
+  
+  if (overlay) {
+    if (msg && !isError && msg.endsWith('...')) {
+      overlayMsg.textContent = msg;
+      overlay.style.display = 'flex';
+    } else {
+      overlay.style.display = 'none';
+    }
+  }
+
+  if (!isError && msg && !msg.endsWith('...')) {
+    setTimeout(() => { el.textContent = ''; }, 3000);
+  }
 }
 </script>
 <script>
@@ -64,16 +80,22 @@ document.addEventListener('DOMContentLoaded', () => {
   const tabSummary = document.getElementById('tab-summary');
   const tabMaster = document.getElementById('tab-master');
   const tabProduct = document.getElementById('tab-product');
+  const tabParts = document.getElementById('tab-parts');
+  const tabVersion = document.getElementById('tab-version');
   
   const viewWorks = document.getElementById('works-view');
   const viewSummary = document.getElementById('summary-view');
   const viewMaster = document.getElementById('master-view');
   const viewProduct = document.getElementById('product-view');
+  const viewParts = document.getElementById('parts-view');
+  const viewVersion = document.getElementById('version-view');
 
-  if (tabWorks && tabSummary && tabMaster && tabProduct) {
+  if (tabWorks && tabSummary && tabMaster && tabProduct && tabParts && tabVersion) {
     const hideAll = () => {
-      [tabWorks, tabSummary, tabMaster, tabProduct].forEach(t => t.classList.remove('active'));
-      [viewWorks, viewSummary, viewMaster, viewProduct].forEach(v => v.style.display = 'none');
+      [tabWorks, tabSummary, tabMaster, tabProduct, tabParts, tabVersion].forEach(t => t.classList.remove('active'));
+      [viewWorks, viewSummary, viewMaster, viewProduct, viewParts, viewVersion].forEach(v => {
+        if (v) v.style.display = 'none';
+      });
     };
 
     tabWorks.addEventListener('click', () => {
@@ -102,6 +124,43 @@ document.addEventListener('DOMContentLoaded', () => {
       viewProduct.style.display = 'block';
       if (typeof renderProductBlocks === 'function') renderProductBlocks();
     });
+
+    tabParts.addEventListener('click', () => {
+      hideAll();
+      tabParts.classList.add('active');
+      viewParts.style.display = 'block';
+      if (typeof renderPartsView === 'function') renderPartsView();
+    });
+
+    tabVersion.addEventListener('click', () => {
+      hideAll();
+      tabVersion.classList.add('active');
+      viewVersion.style.display = 'block';
+      if (typeof renderVersionView === 'function') renderVersionView();
+    });
+  }
+
+  // 使い方ガイドの開閉処理
+  const guideOpenBtn = document.getElementById('guide-open-btn');
+  const guideModal = document.getElementById('guide-modal');
+  const guideOverlay = document.getElementById('guide-overlay');
+  const guideCloseBtn = document.getElementById('guide-close-btn');
+  const guideCloseBtnBottom = document.getElementById('guide-close-btn-bottom');
+
+  if (guideOpenBtn && guideModal && guideOverlay) {
+    const openGuide = () => {
+      guideOverlay.style.display = 'block';
+      guideModal.style.display = 'block';
+    };
+    const closeGuide = () => {
+      guideOverlay.style.display = 'none';
+      guideModal.style.display = 'none';
+    };
+    
+    guideOpenBtn.addEventListener('click', openGuide);
+    guideCloseBtn.addEventListener('click', closeGuide);
+    guideCloseBtnBottom.addEventListener('click', closeGuide);
+    guideOverlay.addEventListener('click', closeGuide);
   }
 });
 </script>

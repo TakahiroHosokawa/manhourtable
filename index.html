@@ -6,7 +6,10 @@
   </head>
   <body>
     <div class="header">
-      <h2>工数管理表アプリ (MP2500)</h2>
+      <div style="display:flex; align-items:center; gap:15px;">
+        <h2>工数管理表アプリ (MP2500)</h2>
+        <button id="guide-open-btn" class="btn-small" style="background:#4caf50; color:white; border-radius:4px; padding:4px 8px; border:1px solid #388e3c;">🔰 使い方ガイド</button>
+      </div>
       <div id="status-message">読込中...</div>
     </div>
     
@@ -14,7 +17,9 @@
       <button class="tab-btn" id="tab-product">製品設定(S01)</button>
       <button class="tab-btn" id="tab-master">マスタ管理(S07)</button>
       <button class="tab-btn active" id="tab-works">工数表(S02)</button>
+      <button class="tab-btn" id="tab-parts">部品・キット(S11,16)</button>
       <button class="tab-btn" id="tab-summary">集計(S03)</button>
+      <button class="tab-btn" id="tab-version">版・出力(S04,06)</button>
     </div>
 
     <div id="app-content">
@@ -68,11 +73,17 @@
         </div>
       </div>
       <div id="works-view">
-        <div id="table-controls" style="margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center;">
-          <button id="save-all-btn" class="btn-small" style="background-color: #2196f3; color: white;">変更を一括保存</button>
-          <label style="cursor: pointer; font-size: 0.9em; color: #555;">
-            <input type="checkbox" id="toggle-disabled"> 無効化された行を表示
-          </label>
+        <div id="table-controls" style="margin-bottom: 10px; display: flex; justify-content: space-between; align-items: flex-end;">
+          <div>
+            <label style="font-weight:bold; margin-right:5px;">表示型式:</label>
+            <select id="works-product-selector" class="edit-input" style="font-size:16px; padding:5px;"></select>
+          </div>
+          <div style="display:flex; gap:15px; align-items:center;">
+            <label style="cursor: pointer; font-size: 0.9em; color: #555;">
+              <input type="checkbox" id="toggle-disabled"> 無効化された行を表示
+            </label>
+            <button id="save-all-btn" class="btn-small" style="background-color: #2196f3; color: white; padding:5px 10px;">変更を一括保存</button>
+          </div>
         </div>
         <!-- js_工数表.html でテーブルを描画します -->
         <table id="works-table">
@@ -82,8 +93,149 @@
           <tbody></tbody>
         </table>
       </div>
+      <div id="parts-view" style="display:none;">
+        <h3>部品の取込 (S11) と突き合わせ (S13)</h3>
+        <div style="margin-bottom: 20px; padding: 15px; background: #f8f9fa; border: 1px solid #ddd; border-radius: 4px;">
+          <input type="file" id="csv-file-input" accept=".csv" style="font-size:16px;">
+          <button id="upload-csv-btn" class="btn-small" style="background-color: #4caf50; color:white;">部品CSVを取込</button>
+          <button id="download-template-btn" class="btn-small" style="margin-left:10px;">取込フォーマットを出力</button>
+          <p style="font-size:0.85em; color:#666; margin-top:5px; margin-bottom:0;">※CSV形式: ヘッダあり(A:製品型番, B:部品品番, C:部品名) カンマ区切り／UTF-8・Shift_JIS 対応／品名にカンマを含む場合は""で囲む</p>
+          <p style="font-size:0.85em; color:#666; margin-top:3px; margin-bottom:0;">※「取込フォーマットを出力」は現在の製品の登録内容をCSVで書き出します。未登録なら見出し行のみのひな形になります。</p>
+        </div>
+        
+        <div id="parts-alert-area"></div>
+        
+        <table id="parts-table" class="summary-table" style="margin-bottom:30px;">
+          <thead>
+            <tr>
+              <th>品番</th><th>品名</th><th>部品区分</th>
+              <th>入数</th><th>荷姿</th><th>置場</th><th>搬入条件</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+
+        <hr>
+        
+        <h3>キット表 (S16)</h3>
+        <div style="margin-bottom: 20px; padding: 15px; background: #f0f4c3; border: 1px solid #cddc39; border-radius: 4px; display:flex; align-items:center; gap:15px;">
+          <div>
+            <label>対象台数: <input type="number" id="kit-target-qty" value="1" min="1" class="edit-input" style="width:60px;"></label>
+          </div>
+          <div>
+            <label>出力軸: 
+              <select id="kit-axis-selector" class="edit-input" style="padding:4px;">
+                <option value="大工程別">大工程別</option>
+                <option value="組立ブロック別">組立ブロック別</option>
+                <option value="中工程別">中工程別</option>
+              </select>
+            </label>
+          </div>
+          <button id="generate-kit-btn" class="btn-small" style="background-color: #ff9800; color:white;">キット表を画面に生成</button>
+        </div>
+        <div id="kit-result-area"></div>
+      </div>
       <div id="summary-view" style="display:none;">
         <div id="summary-content">集計データを読み込んでいます...</div>
+      </div>
+      <div id="version-view" style="display:none;">
+        <h3>版の確定 (S04)</h3>
+        <div style="margin-bottom: 20px; padding: 15px; background: #e8f5e9; border: 1px solid #c8e6c9; border-radius: 4px;">
+          <p style="margin-top:0; color:#2e7d32; font-size:0.9em;">
+            現在の工数表（有効な行のみ）のスナップショットを作成し、「確定版」として履歴に残します。<br>
+            ※一度確定した版のデータは後から変更できません。
+          </p>
+          <button id="commit-version-btn" class="btn-small" style="background-color: #4caf50; color:white;">現在の状態を版として確定する</button>
+        </div>
+
+        <h3>スプレッドシート出力 (S06)</h3>
+        <div style="margin-bottom: 20px; padding: 15px; background: #e3f2fd; border: 1px solid #bbdefb; border-radius: 4px; display:flex; gap:10px; align-items:center;">
+          <label>出力対象: <select id="export-version-selector" class="edit-input" style="padding:4px; width:300px;"></select></label>
+          <button id="export-version-btn" class="btn-small" style="background-color: #2196f3; color:white;">新しいスプレッドシートに出力</button>
+        </div>
+
+        <h3>確定済みの版一覧</h3>
+        <table id="version-table" class="summary-table">
+          <thead>
+            <tr>
+              <th>版番号</th><th>確定日時</th><th>確定者</th><th>改訂理由</th><th>合意状況</th><th>備考</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- 画面中央のローディングオーバーレイ -->
+    <div id="loading-overlay" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:9999; flex-direction:column; justify-content:center; align-items:center; color:white;">
+      <div class="spinner"></div>
+      <div id="loading-message" style="margin-top:20px; font-size:18px; font-weight:bold;">処理中...</div>
+    </div>
+
+    <!-- 観測記録用のモーダルコンテナなど -->
+    <div id="record-modal" style="display:none; position:fixed; top:10%; left:50%; transform:translateX(-50%); width:700px; max-height:80%; background:#fff; z-index:1000; border-radius:8px; padding:20px; overflow-y:auto; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
+        <h3 id="record-modal-title" style="margin:0;">観測記録 (S14)</h3>
+        <button id="record-modal-close" style="background:none; border:none; font-size:1.5em; cursor:pointer;">&times;</button>
+      </div>
+      <div id="record-modal-content"></div>
+    </div>
+
+    <!-- 使い方ガイドモーダル -->
+    <div id="guide-overlay" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:1999;"></div>
+    <div id="guide-modal" style="display:none; position:fixed; top:5%; left:50%; transform:translateX(-50%); width:650px; max-height:90%; background:#fff; z-index:2000; border-radius:8px; padding:25px; overflow-y:auto; box-shadow: 0 4px 15px rgba(0,0,0,0.3);">
+      <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #eee; padding-bottom:10px; margin-bottom:15px;">
+        <h3 style="margin:0; color:#2c3e50;">🔰 アプリの初期設定・入力の手順</h3>
+        <button id="guide-close-btn" style="background:none; border:none; font-size:1.5em; cursor:pointer; color:#666;">&times;</button>
+      </div>
+      <div style="line-height:1.6; color:#333; font-size:14px;">
+        <div style="margin-bottom:15px; padding:10px; background:#e3f2fd; border-radius:4px; font-size:13px;">
+          本アプリは製品ごとの「工数（作業時間・人数）」と「使用部品・設備」を管理するシステムです。<br>
+          以下の手順に沿ってデータを準備・入力してください。
+        </div>
+        
+        <h4 style="color:#1976d2; margin-top:20px; border-left:4px solid #1976d2; padding-left:8px;">【ステップ 1】共通マスタの準備 （「マスタ管理」タブ）</h4>
+        <p style="margin-top:5px; margin-bottom:10px;">最初に全製品で共通となる基本情報を登録します。</p>
+        <ul style="margin-top:0;">
+          <li><b>工程/大工程:</b> ライン上のステーション名など（例: 構体, 艤装, 検査）</li>
+          <li><b>作業班:</b> 作業を行うグループ（例: メカ班, エレキ班）</li>
+          <li><b>設備:</b> 各工程で共有・専有する設備（例: クレーン, リフター）</li>
+        </ul>
+
+        <h4 style="color:#1976d2; margin-top:20px; border-left:4px solid #1976d2; padding-left:8px;">【ステップ 2】製品とブロックの作成 （「製品設定」タブ）</h4>
+        <p style="margin-top:5px; margin-bottom:10px;">対象の製品を選び、作業の大きな括りとなる「組立ブロック」を作ります。</p>
+        <ul style="margin-top:0;">
+          <li>既存の製品をベースにする場合は「製品を複製して新規作成」を行います。</li>
+          <li>製品内に「消火器類取付」「MD挿入」などの親玉となる<b>組立ブロック</b>を登録し、順序を整えます。</li>
+        </ul>
+
+        <h4 style="color:#1976d2; margin-top:20px; border-left:4px solid #1976d2; padding-left:8px;">【ステップ 3】部品データの取込 （「部品・キット」タブ）</h4>
+        <p style="margin-top:5px; margin-bottom:10px;">設計からのBOM（部品表）を取り込みます。</p>
+        <ul style="margin-top:0;">
+          <li>部品CSVをアップロードし、アプリ内で部品を検索・紐付けできるようにします。</li>
+          <li>必要に応じて部品区分や入数、荷姿などを補足入力します。</li>
+        </ul>
+
+        <h4 style="color:#1976d2; margin-top:20px; border-left:4px solid #1976d2; padding-left:8px;">【ステップ 4】工数表の入力 （「工数表」タブ）</h4>
+        <p style="margin-top:5px; margin-bottom:10px;">ここがメインの作業です。ステップ2で作った組立ブロックの中に、実際の作業手順を書き出します。</p>
+        <ul style="margin-top:0;">
+          <li><b>作業内訳の追加:</b> 「+ 内訳追加」ボタンから、具体的な小工程（要素作業）を追加します。</li>
+          <li><b>詳細の入力:</b> 区分、作業方式、時間（現状）、人数などを入力します。</li>
+          <li><b>紐付け:</b> 右側の「部品」「設備」ボタンから、マスタデータを紐付けます。</li>
+          <li><b>観測値の反映:</b> 時間が未確定の場合、「観測」ボタンから実際の測定結果を記録し、平均値を正味時間に反映させることができます。</li>
+          <li><span style="color:#d32f2f; font-weight:bold;">※入力後は必ず上部の「変更を一括保存」ボタンを押してください。</span></li>
+        </ul>
+
+        <h4 style="color:#1976d2; margin-top:20px; border-left:4px solid #1976d2; padding-left:8px;">【ステップ 5】集計・キット表の確認</h4>
+        <p style="margin-top:5px; margin-bottom:10px;">入力が終わったら結果を確認します。</p>
+        <ul style="margin-top:0;">
+          <li><b>「集計」タブ:</b> 総工数、自動化率、班別・工程別の負荷バランスなどを確認します。</li>
+          <li><b>「部品・キット」タブ:</b> 紐付け漏れ（未割付）がないか確認し、必要台数分の「キット表」を出力します。</li>
+        </ul>
+      </div>
+      <div style="text-align:center; margin-top:20px;">
+        <button id="guide-close-btn-bottom" class="btn-small" style="background:#607d8b; color:#fff; font-size:14px; padding:8px 24px;">閉じる</button>
       </div>
     </div>
 
@@ -92,6 +244,9 @@
     <?!= HtmlService.createHtmlOutputFromFile('js_マスタ').getContent(); ?>
     <?!= HtmlService.createHtmlOutputFromFile('js_計算').getContent(); ?>
     <?!= HtmlService.createHtmlOutputFromFile('js_工数表').getContent(); ?>
+    <?!= HtmlService.createHtmlOutputFromFile('js_部品').getContent(); ?>
+    <?!= HtmlService.createHtmlOutputFromFile('js_観測').getContent(); ?>
+    <?!= HtmlService.createHtmlOutputFromFile('js_版').getContent(); ?>
     <?!= HtmlService.createHtmlOutputFromFile('js_集計').getContent(); ?>
     <?!= HtmlService.createHtmlOutputFromFile('js_紐付けモーダル').getContent(); ?>
   </body>

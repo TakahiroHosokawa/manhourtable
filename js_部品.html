@@ -1,0 +1,338 @@
+<script>
+// =========================================
+// js_部品.html (S11, S13, S16 部品・キット管理)
+// =========================================
+
+document.addEventListener('DOMContentLoaded', () => {
+  const uploadBtn = document.getElementById('upload-csv-btn');
+  const fileInput = document.getElementById('csv-file-input');
+  
+  if (uploadBtn && fileInput) {
+    uploadBtn.addEventListener('click', () => {
+      const file = fileInput.files[0];
+      if (!file) {
+        alert('CSVファイルを選択してください。');
+        return;
+      }
+      uploadCSV(file);
+    });
+  }
+
+  const templateBtn = document.getElementById('download-template-btn');
+  if (templateBtn) {
+    templateBtn.addEventListener('click', downloadImportTemplate);
+  }
+
+  const generateKitBtn = document.getElementById('generate-kit-btn');
+  if (generateKitBtn) {
+    generateKitBtn.addEventListener('click', generateKitTable);
+  }
+});
+
+function renderPartsView() {
+  const tbody = document.querySelector('#parts-table tbody');
+  const alertArea = document.getElementById('parts-alert-area');
+  if (!tbody || !appData || !appData.parts) return;
+  
+  tbody.innerHTML = '';
+  alertArea.innerHTML = '';
+
+  const parts = appData.parts || [];
+  const partUsages = appData.partUsages || []; // 全ての使用部品
+  const usedDetailIds = appData.details.filter(d => d['状態'] === '有効').map(d => d['内訳ID']);
+  
+  // 現在の製品(有効な小工程)で実際に使われている部品
+  const activeUsages = partUsages.filter(u => usedDetailIds.includes(u['内訳ID']));
+  const activePartNos = new Set(activeUsages.map(u => u['品番']));
+  const csvPartNos = new Set((appData.productParts || []).map(p => p['品番']));
+
+  // S13 突き合わせ警告 (未割付 = CSVにあるが、使用部品にない)
+  const unassigned = [...csvPartNos].filter(p => !activePartNos.has(p));
+  if (unassigned.length > 0) {
+    alertArea.innerHTML = `<div style="padding:10px; background:#ffebee; color:#c62828; border:1px solid #ef9a9a; margin-bottom:15px; border-radius:4px;">
+      <b>⚠️ 警告: 未割付の部品が ${unassigned.length} 件あります！</b><br>
+      このままではキットに欠品が発生します。工数表画面から対象の小工程へ部品を紐づけてください。<br>
+      <small>例: ${unassigned.slice(0, 5).join(', ')} ${unassigned.length > 5 ? '...' : ''}</small>
+    </div>`;
+  }
+
+  // 部品一覧の表示
+  parts.forEach(part => {
+    const isUsed = activePartNos.has(part['品番']);
+    const inCsv = csvPartNos.has(part['品番']);
+    
+    // 現在の製品のCSVにもなく、使われてもいない場合は非表示 (またはグレーアウト)
+    if (!isUsed && !inCsv) return;
+
+    const tr = document.createElement('tr');
+    tr.dataset.id = part['品番'];
+    tr.dataset.baseRow = JSON.stringify(part);
+    if (!inCsv && isUsed) {
+       tr.style.backgroundColor = '#fff8e1'; // CSVに無いのに使っている
+    }
+    
+    // 編集可能にする列 (部品区分, 入数, 荷姿, 置場, 搬入条件)
+    tr.innerHTML = `
+      <td>${escapeHtml(part['品番'])}</td>
+      <td>${escapeHtml(part['品名'])}
+         ${!inCsv ? '<span style="color:#f57c00; font-size:0.8em; margin-left:5px;">[CSV外]</span>' : ''}
+         ${!isUsed ? '<span style="color:#d32f2f; font-size:0.8em; margin-left:5px;">[未割付]</span>' : ''}
+      </td>
+      <td>${buildSelect('部品区分', OPTIONS['部品区分'] || ['小物', '大物', '長尺', '消耗品', '基板'], part['部品区分'], false, true)}</td>
+      <td><input type="number" name="入数" value="${part['入数']}" class="edit-input" style="width:60px;"></td>
+      <td><input type="text" name="荷姿" value="${escapeHtml(part['荷姿'])}" class="edit-input" style="width:80px;"></td>
+      <td><input type="text" name="置場" value="${escapeHtml(part['置場'])}" class="edit-input" style="width:80px;"></td>
+      <td><input type="text" name="搬入条件" value="${escapeHtml(part['搬入条件'])}" class="edit-input" style="width:100px;"></td>
+      <td><button class="btn-small save-part-btn" disabled>保存</button></td>
+    `;
+    tbody.appendChild(tr);
+
+    // 変更検知と保存
+    tr.querySelectorAll('.edit-input, select').forEach(input => {
+      input.addEventListener('change', () => {
+        input.classList.add('changed');
+        tr.querySelector('.save-part-btn').disabled = false;
+      });
+    });
+
+    tr.querySelector('.save-part-btn').addEventListener('click', async () => {
+      const btn = tr.querySelector('.save-part-btn');
+      btn.disabled = true;
+      btn.textContent = '保存中';
+      
+      const newObj = Object.assign({}, part);
+      tr.querySelectorAll('.edit-input, select').forEach(input => {
+        if (input.name) {
+          newObj[input.name] = input.type === 'number' && input.value !== '' ? Number(input.value) : input.value;
+        }
+      });
+      
+      const res = await callServer('savePartMaster', newObj);
+      if (res.ok) {
+        tr.querySelectorAll('.edit-input, select').forEach(i => i.classList.remove('changed'));
+        btn.textContent = '保存';
+        tr.dataset.baseRow = JSON.stringify(newObj);
+        // メモリ上のデータも更新
+        const idx = appData.parts.findIndex(p => p['品番'] === part['品番']);
+        if (idx > -1) appData.parts[idx] = newObj;
+      } else {
+        alert('エラー: ' + res.message);
+        btn.disabled = false;
+        btn.textContent = '保存';
+      }
+    });
+  });
+}
+
+function uploadCSV(file) {
+  const reader = new FileReader();
+  reader.onload = async function(e) {
+    const csvText = decodeCsvBuffer_(e.target.result);
+    showStatus('CSVをアップロード中...');
+    const uploadBtn = document.getElementById('upload-csv-btn');
+    uploadBtn.disabled = true;
+
+    let res;
+    try {
+      res = await callServer('importPartsCSV', csvText);
+    } catch (err) {
+      res = err && err.ok === false ? err : { ok: false, message: (err && err.message) || String(err) };
+    }
+    if (res.ok) {
+      const d = res.data || {};
+      let msg = `取込完了しました。\n部品マスタ 追加: ${d.added || 0}件, 品名更新: ${d.updated || 0}件\nこの製品への紐付け: ${d.linked || 0}件`;
+      if (d.skipped) msg += `\n型番違いで対象外: ${d.skipped}件`;
+      if (d.duplicated) msg += `\nCSV内の重複行: ${d.duplicated}件`;
+      alert(msg);
+      const reloadRes = await callServer('getAppData');
+      if (reloadRes.ok) {
+        appData = reloadRes.data;
+        renderPartsView();
+      }
+    } else {
+      alert('取込エラー: ' + res.message);
+    }
+    uploadBtn.disabled = false;
+    document.getElementById('csv-file-input').value = '';
+    showStatus('');
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+/**
+ * UTF-8 として読み、壊れる場合は Shift_JIS(cp932) として読み直す。
+ * Excel の「CSV (コンマ区切り)」は Shift_JIS で保存されるため。
+ */
+function decodeCsvBuffer_(buffer) {
+  const bytes = new Uint8Array(buffer);
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  } catch (e) {
+    try {
+      return new TextDecoder('shift_jis').decode(bytes);
+    } catch (e2) {
+      return new TextDecoder('utf-8').decode(bytes);
+    }
+  }
+}
+
+// S16 キット表生成
+async function generateKitTable() {
+  const btn = document.getElementById('generate-kit-btn');
+  const targetQty = Number(document.getElementById('kit-target-qty').value || 1);
+  const axis = document.getElementById('kit-axis-selector').value;
+  
+  btn.disabled = true;
+  showStatus('キット表を生成中...');
+  
+  const res = await callServer('generateKitData', targetQty, axis);
+  if (res.ok) {
+    renderKitTable(res.data, targetQty, axis);
+    showStatus('');
+  } else {
+    alert('エラー: ' + res.message);
+    showStatus('');
+  }
+  btn.disabled = false;
+}
+
+function renderKitTable(kitData, targetQty, axis) {
+  const container = document.getElementById('kit-result-area');
+  if (!kitData || kitData.length === 0) {
+    container.innerHTML = '<p>対象データがありません。</p>';
+    return;
+  }
+  
+  let html = `<div style="margin-top:20px; display:flex; justify-content:space-between;">
+    <h4>出力結果 (対象台数: ${targetQty}台, 軸: ${axis})</h4>
+    <button class="btn-small" onclick="alert('スプレッドシートへの出力処理は後段の要件です。')">スプレッドシートへ出力(S06)</button>
+  </div>`;
+  
+  // 軸ごとにグルーピング
+  const grouped = {};
+  kitData.forEach(row => {
+    if (!grouped[row.groupName]) grouped[row.groupName] = [];
+    grouped[row.groupName].push(row);
+  });
+  
+  for (const groupName in grouped) {
+    html += `<h5 style="margin-top:20px; background:#e0e0e0; padding:5px;">${escapeHtml(groupName)}</h5>`;
+    html += `<table class="summary-table">
+      <thead>
+        <tr>
+          <th>品番</th><th>品名</th><th>区分</th>
+          <th>1台必要数</th><th>対象台数分<br>(×${targetQty})</th>
+          <th>入数</th><th>箱数(端数)</th>
+          <th>荷姿</th><th>置場</th>
+        </tr>
+      </thead>
+      <tbody>`;
+    
+    grouped[groupName].forEach(row => {
+      const boxText = row.boxes > 0 ? `${row.boxes}箱` : '';
+      const remText = row.remainder > 0 ? `+${row.remainder}バラ` : '';
+      html += `<tr>
+        <td>${escapeHtml(row['品番'])}</td>
+        <td>${escapeHtml(row['品名'])}</td>
+        <td>${escapeHtml(row['部品区分'])}</td>
+        <td style="text-align:right;">${row.unitQty}</td>
+        <td style="text-align:right; font-weight:bold;">${row.totalQty}</td>
+        <td style="text-align:right;">${row['入数'] || '-'}</td>
+        <td style="text-align:right; color:#2e7d32;">${boxText} ${remText}</td>
+        <td>${escapeHtml(row['荷姿'])}</td>
+        <td>${escapeHtml(row['置場'])}</td>
+      </tr>`;
+    });
+    html += `</tbody></table>`;
+  }
+  
+  container.innerHTML = html;
+}
+
+// =========================================
+// 取込フォーマット(CSV)の出力
+// =========================================
+
+/**
+ * 現在の製品の製品部品を、取込CSVと同じ形式で書き出す。
+ * 登録が無い場合は見出し行だけのひな形を出力する。
+ */
+function downloadImportTemplate() {
+  const product = (typeof appData !== 'undefined' && appData) ? (appData.product || {}) : {};
+  const typeCode = product['CSV型番'] || product['製品コード'] || '';
+  const partNameMap = {};
+  ((appData && appData.parts) || []).forEach(p => { partNameMap[p['品番']] = p['品名'] || ''; });
+
+  const rows = [['製品型番', '部品品番', '部品名']];
+  ((appData && appData.productParts) || [])
+    .filter(pp => pp['状態'] !== '無効')
+    .forEach(pp => {
+      rows.push([typeCode, pp['品番'] || '', partNameMap[pp['品番']] || '']);
+    });
+
+  // 取込側と同じ規則で常に引用符で囲む。Excel 対策に UTF-8 BOM を付ける。
+  const csv = '\uFEFF' + rows.map(r => r.map(csvQuote_).join(',')).join('\r\n') + '\r\n';
+  const fileName = 'BOM_' + (typeCode || 'template') + '.csv';
+
+  if (!downloadTextFile_(fileName, csv)) {
+    showCsvFallback_(fileName, csv.replace(/^\uFEFF/, ''));
+  }
+  if (rows.length === 1) {
+    showStatus('登録済みの部品がないため、見出し行のみのひな形を出力しました。');
+    setTimeout(() => showStatus(''), 4000);
+  }
+}
+
+function csvQuote_(v) {
+  return '"' + String(v === null || v === undefined ? '' : v).replace(/"/g, '""') + '"';
+}
+
+/**
+ * ブラウザにファイルを保存させる。ダウンロードが塞がれている場合は false を返す。
+ */
+function downloadTextFile_(fileName, text) {
+  try {
+    const blob = new Blob([text], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 1000);
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+/**
+ * ダウンロードできない環境向けに、本文をコピーできる形で表示する。
+ */
+function showCsvFallback_(fileName, text) {
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.4); display:flex; align-items:center; justify-content:center; z-index:9999;';
+  const box = document.createElement('div');
+  box.style.cssText = 'background:#fff; padding:16px; border-radius:4px; width:min(720px, 90vw);';
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.readOnly = true;
+  ta.style.cssText = 'width:100%; height:50vh; font-family:monospace; font-size:12px;';
+  const msg = document.createElement('p');
+  msg.style.cssText = 'margin:0 0 8px; font-size:0.9em;';
+  msg.textContent = 'ダウンロードできませんでした。下の内容をコピーし、' + fileName + ' として UTF-8 で保存してください。';
+  const close = document.createElement('button');
+  close.className = 'btn-small';
+  close.textContent = '閉じる';
+  close.style.marginTop = '8px';
+  close.addEventListener('click', () => document.body.removeChild(overlay));
+  box.appendChild(msg);
+  box.appendChild(ta);
+  box.appendChild(close);
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+  ta.select();
+}
+
+</script>

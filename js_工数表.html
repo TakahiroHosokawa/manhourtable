@@ -11,6 +11,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     appData = res.data;
     // パラメータをマップ化（計算用）
     appData.params.forEach(p => paramMap[p['パラメータID']] = p['値']);
+    
+    initWorksProductSelector();
     renderTable();
     showStatus('読み込み完了');
   }
@@ -24,12 +26,42 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   }
 
-  // 一括保存ボタン
+    // 製品に紐づくデータだけフィルタ
+// 一括保存ボタン
   const saveAllBtn = document.getElementById('save-all-btn');
   if (saveAllBtn) {
     saveAllBtn.addEventListener('click', saveAllRows);
   }
 });
+
+function initWorksProductSelector() {
+  const selector = document.getElementById('works-product-selector');
+  if (!selector || !appData || !appData.allProducts) return;
+  
+  selector.innerHTML = appData.allProducts.map(p => 
+    `<option value="${escapeHtml(p['製品ID'])}" ${p['製品ID'] === appData.product['製品ID'] ? 'selected' : ''}>
+        ${escapeHtml(p['型式名'])} (${escapeHtml(p['製品コード'])})
+       </option>`
+  ).join('');
+
+  selector.addEventListener('change', async (e) => {
+    const selectedId = e.target.value;
+    if (selectedId === appData.product['製品ID']) return;
+    
+    showStatus('製品を切り替えています...');
+    const res = await callServer('switchProduct', selectedId);
+    if (res.ok) {
+      const reloadRes = await callServer('getAppData');
+      if (reloadRes.ok) {
+        appData = reloadRes.data;
+        appData.params.forEach(p => paramMap[p['パラメータID']] = p['値']);
+        initWorksProductSelector();
+        renderTable();
+        alert('製品を切り替えました。');
+      }
+    }
+  });
+}
 
 // ドラッグ&ドロップ用の変数
 let draggedRow = null;
@@ -126,6 +158,7 @@ function renderTable() {
         <td>
           <button class="btn-small parts-btn" ${isDisabled ? 'disabled' : ''}>部品</button>
           <button class="btn-small equip-btn" ${isDisabled ? 'disabled' : ''}>設備</button>
+          <button class="btn-small record-btn" style="background:#8e24aa; color:white;" ${isDisabled ? 'disabled' : ''}>観測</button>
         </td>
         <td class="calc-warning">${escapeHtml(calc.warning)}</td>
         <td>
@@ -163,6 +196,9 @@ function renderTable() {
         if (!isDisabled) {
           trD.querySelector('.parts-btn').addEventListener('click', () => openPartsModal(detail['内訳ID']));
           trD.querySelector('.equip-btn').addEventListener('click', () => openEquipModal(detail['内訳ID'], work['工程ID'], detail['作業班ID']));
+          trD.querySelector('.record-btn').addEventListener('click', () => {
+            if (typeof openRecordModal === 'function') openRecordModal(detail['内訳ID']);
+          });
         }
 
         // 無効化ボタン (F01)

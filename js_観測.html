@@ -1,0 +1,235 @@
+<script>
+// =========================================
+// js_観測.html (S14 観測記録)
+// =========================================
+
+let currentRecordDetailId = '';
+let currentRecords = [];
+
+const recordModal = document.getElementById('record-modal');
+const recordOverlay = document.getElementById('loading-overlay'); // 使い回すがイベントが干渉しないよう注意。専用のオーバーレイを作成推奨。
+
+// 専用のオーバーレイを作成
+const recOverlay = document.createElement('div');
+recOverlay.style.cssText = 'display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:999;';
+document.body.appendChild(recOverlay);
+
+const recCloseBtn = document.getElementById('record-modal-close');
+const recContent = document.getElementById('record-modal-content');
+
+recCloseBtn.addEventListener('click', closeRecordModal);
+recOverlay.addEventListener('click', closeRecordModal);
+
+function closeRecordModal() {
+  recordModal.style.display = 'none';
+  recOverlay.style.display = 'none';
+}
+
+async function openRecordModal(detailId) {
+  currentRecordDetailId = detailId;
+  const title = document.getElementById('record-modal-title');
+  title.textContent = `観測記録 (内訳ID: ${detailId})`;
+  
+  recContent.innerHTML = '<p>読み込み中...</p>';
+  recordModal.style.display = 'block';
+  recOverlay.style.display = 'block';
+  
+  const res = await callServer('getRecords', detailId);
+  if (res.ok) {
+    currentRecords = res.data;
+    renderRecordModal();
+  } else {
+    recContent.innerHTML = `<p style="color:red;">エラー: ${res.message}</p>`;
+  }
+}
+
+function renderRecordModal() {
+  const detail = appData.details.find(d => d['内訳ID'] === currentRecordDetailId);
+  if (!detail) {
+    recContent.innerHTML = '<p>対象の小工程が見つかりません。</p>';
+    return;
+  }
+
+  // 集計値の計算 (採用=trueのみ)
+  const validRecords = currentRecords.filter(r => r['採用'] === true && r['状態'] !== '無効');
+  let min = '-', max = '-', avg = '-', median = '-', rangeRatio = '-';
+  
+  if (validRecords.length > 0) {
+    // 1単位あたりの秒数に換算して比較 (観測値 / 観測数量)
+    const values = validRecords.map(r => {
+      const v = Number(r['観測値']) || 0;
+      const q = Number(r['観測数量']) || 1;
+      return v / q;
+    }).sort((a, b) => a - b);
+    
+    min = values[0];
+    max = values[values.length - 1];
+    avg = values.reduce((a, b) => a + b, 0) / values.length;
+    
+    const mid = Math.floor(values.length / 2);
+    median = values.length % 2 !== 0 ? values[mid] : (values[mid - 1] + values[mid]) / 2;
+    
+    if (min > 0) {
+      rangeRatio = (max / min).toFixed(2);
+    }
+  }
+
+  let html = `
+    <div style="display:flex; justify-content:space-between; margin-bottom:15px;">
+      <div>
+        <b>【現在の標準値】</b><br>
+        現状正味時間: ${detail['正味時間_現状']} 秒 / 目標正味時間: ${detail['正味時間_目標']} 秒
+      </div>
+      <div style="background:#f0f4c3; padding:10px; border-radius:4px; font-size:0.9em;">
+        <b>【自動集計 (採用分のみ, 1数量あたり換算)】</b><br>
+        サンプル数: ${validRecords.length} / 最小: ${formatNum(min)} / 最大: ${formatNum(max)}<br>
+        平均: ${formatNum(avg)} / 中央値: ${formatNum(median)} / レンジ比: <span style="${rangeRatio > 1.5 ? 'color:red;font-weight:bold;' : ''}">${rangeRatio}</span>
+      </div>
+    </div>
+    
+    <div style="margin-bottom:10px; text-align:right;">
+      <button class="btn-small" id="apply-record-btn" style="background:#4caf50; color:white; padding:5px 10px;" ${validRecords.length === 0 ? 'disabled' : ''}>平均値を現状正味時間に反映 (F06)</button>
+    </div>
+    
+    <table class="summary-table" style="width:100%; margin-bottom:15px; font-size:12px;">
+      <thead>
+        <tr>
+          <th>採用</th><th>観測日</th><th>方法</th><th>観測者</th>
+          <th>観測値(秒)</th><th>数量</th><th>人数</th><th>備考</th><th>操作</th>
+        </tr>
+      </thead>
+      <tbody>
+  `;
+  
+  currentRecords.forEach((r, idx) => {
+    if (r['状態'] === '無効') return;
+    
+    html += `
+      <tr style="${r['採用'] ? '' : 'background:#f5f5f5; color:#999;'}">
+        <td style="text-align:center;"><input type="checkbox" class="rec-adopt" data-idx="${idx}" ${r['採用'] ? 'checked' : ''}></td>
+        <td>${escapeHtml(r['観測日'] ? r['観測日'].split('T')[0] : '')}</td>
+        <td>${escapeHtml(r['方法'])}</td>
+        <td>${escapeHtml(r['観測者'])}</td>
+        <td style="text-align:right;">${r['観測値']}</td>
+        <td style="text-align:right;">${r['観測数量']}</td>
+        <td style="text-align:right;">${r['人数']}</td>
+        <td>${escapeHtml(r['備考'])}</td>
+        <td><button class="btn-small remove-rec-btn" data-idx="${idx}">削除</button></td>
+      </tr>
+    `;
+  });
+  
+  html += `
+      </tbody>
+    </table>
+    
+    <h5 style="margin:15px 0 5px 0;">新規観測データの追加</h5>
+    <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; background:#f8f9fa; padding:10px; border-radius:4px;">
+      <label>観測日: <input type="date" id="new-rec-date" class="edit-input" value="${new Date().toISOString().split('T')[0]}"></label>
+      <label>方法: <select id="new-rec-method" class="edit-input"><option>ストップウォッチ</option><option>動画分析</option><option>推測</option></select></label>
+      <label>観測者: <input type="text" id="new-rec-observer" class="edit-input" style="width:80px;"></label>
+      <label>観測値(秒): <input type="number" id="new-rec-val" class="edit-input" style="width:60px;" min="0" step="0.1"></label>
+      <label>数量: <input type="number" id="new-rec-qty" class="edit-input" style="width:50px;" value="1" min="1"></label>
+      <label>人数: <input type="number" id="new-rec-person" class="edit-input" style="width:40px;" value="1" min="1"></label>
+      <label>備考: <input type="text" id="new-rec-note" class="edit-input" style="width:100px;"></label>
+      <label><input type="checkbox" id="new-rec-adopt" checked> 採用する</label>
+      <button id="add-rec-btn" class="btn-small" style="background:#2196f3; color:white;">追加保存</button>
+    </div>
+  `;
+  
+  recContent.innerHTML = html;
+  
+  // イベントバインド
+  document.querySelectorAll('.rec-adopt').forEach(chk => {
+    chk.addEventListener('change', async (e) => {
+      const idx = e.target.dataset.idx;
+      currentRecords[idx]['採用'] = e.target.checked;
+      await updateRecord(currentRecords[idx]);
+    });
+  });
+  
+  document.querySelectorAll('.remove-rec-btn').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      if (!confirm('この記録を削除(無効化)しますか？')) return;
+      const idx = e.target.dataset.idx;
+      currentRecords[idx]['状態'] = '無効';
+      await updateRecord(currentRecords[idx]);
+    });
+  });
+  
+  const addBtn = document.getElementById('add-rec-btn');
+  if (addBtn) {
+    addBtn.addEventListener('click', async () => {
+      const val = Number(document.getElementById('new-rec-val').value);
+      if (!val || val <= 0) {
+        alert('観測値を正しく入力してください。');
+        return;
+      }
+      
+      const newRec = {
+        '観測ID': '',
+        '内訳ID': currentRecordDetailId,
+        '観測日': document.getElementById('new-rec-date').value,
+        '方法': document.getElementById('new-rec-method').value,
+        '観測者': document.getElementById('new-rec-observer').value,
+        'サンプル番号': currentRecords.length + 1,
+        '観測値': val,
+        '観測数量': Number(document.getElementById('new-rec-qty').value) || 1,
+        '人数': Number(document.getElementById('new-rec-person').value) || 1,
+        '採用': document.getElementById('new-rec-adopt').checked,
+        '備考': document.getElementById('new-rec-note').value,
+        '状態': '有効'
+      };
+      
+      addBtn.disabled = true;
+      addBtn.textContent = '保存中...';
+      const res = await callServer('saveRecordData', newRec);
+      if (res.ok) {
+        currentRecords.push(res.data.row);
+        renderRecordModal(); // 再描画
+      } else {
+        alert('エラー: ' + res.message);
+        addBtn.disabled = false;
+        addBtn.textContent = '追加保存';
+      }
+    });
+  }
+  
+  const applyBtn = document.getElementById('apply-record-btn');
+  if (applyBtn) {
+    applyBtn.addEventListener('click', () => {
+      if (avg === '-') return;
+      
+      // 親画面(工数表)の該当行のinputに値をセットし、変更イベントを発火させる
+      const tr = document.querySelector(`.detail-row[data-id="${currentRecordDetailId}"]`);
+      if (tr) {
+        const input = tr.querySelector('input[name="正味時間_現状"]');
+        if (input) {
+          // 丸め処理 (ここでは簡易的に小数1桁とする。本来は製品の丸め単位設定に準ずる)
+          input.value = avg.toFixed(1);
+          input.dispatchEvent(new Event('change'));
+          alert(`現状正味時間を ${input.value} 秒に設定しました。\n「変更を一括保存」ボタンで保存してください。`);
+          closeRecordModal();
+        }
+      }
+    });
+  }
+}
+
+async function updateRecord(recordObj) {
+  showStatus('記録を更新しています...');
+  const res = await callServer('saveRecordData', recordObj);
+  if (res.ok) {
+    showStatus('');
+    renderRecordModal(); // 再描画で集計を更新
+  } else {
+    alert('エラー: ' + res.message);
+    showStatus('');
+  }
+}
+
+function formatNum(val) {
+  if (val === '-') return val;
+  return Number(val).toFixed(1);
+}
+</script>

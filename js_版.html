@@ -1,0 +1,82 @@
+<script>
+// =========================================
+// js_版.html (S04 版の確定, S06 出力)
+// =========================================
+
+document.addEventListener('DOMContentLoaded', () => {
+  const commitBtn = document.getElementById('commit-version-btn');
+  const exportBtn = document.getElementById('export-version-btn');
+  
+  if (commitBtn) commitBtn.addEventListener('click', commitVersion);
+  if (exportBtn) exportBtn.addEventListener('click', exportVersion);
+});
+
+function renderVersionView() {
+  const tbody = document.querySelector('#version-table tbody');
+  const selector = document.getElementById('export-version-selector');
+  if (!tbody || !appData || !appData.versions) return;
+  
+  tbody.innerHTML = '';
+  selector.innerHTML = '<option value="current">現在の最新状態 (未確定含む)</option>';
+  
+  const versions = appData.versions.sort((a, b) => Number(b['版番号']) - Number(a['版番号']));
+  
+  versions.forEach(v => {
+    // selector options
+    selector.innerHTML += `<option value="${v['版ID']}">版 ${v['版番号']} (${v['確定日時'] ? v['確定日時'].split('T')[0] : ''})</option>`;
+    
+    // table row
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${v['版番号']}</td>
+      <td>${escapeHtml(v['確定日時'])}</td>
+      <td>${escapeHtml(v['確定者'])}</td>
+      <td>${escapeHtml(v['改訂理由'])}</td>
+      <td>${escapeHtml(v['合意状況'])}</td>
+      <td>${escapeHtml(v['備考'])}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+async function commitVersion() {
+  const reason = prompt('現在の工数表をスナップショットとして確定します。\n改訂理由を入力してください:');
+  if (!reason) return;
+  
+  showStatus('版を確定しています（スナップショット作成中）...');
+  const btn = document.getElementById('commit-version-btn');
+  btn.disabled = true;
+  
+  const res = await callServer('commitVersionData', reason);
+  if (res.ok) {
+    alert(`版 ${res.data.versionNumber} を確定しました！`);
+    const reloadRes = await callServer('getAppData');
+    if (reloadRes.ok) {
+      appData = reloadRes.data;
+      appData.params.forEach(p => paramMap[p['パラメータID']] = p['値']);
+      renderVersionView();
+    }
+  } else {
+    alert('エラー: ' + res.message);
+  }
+  btn.disabled = false;
+  showStatus('');
+}
+
+async function exportVersion() {
+  const versionId = document.getElementById('export-version-selector').value;
+  showStatus('スプレッドシートを出力しています...');
+  const btn = document.getElementById('export-version-btn');
+  btn.disabled = true;
+  
+  const res = await callServer('exportVersionToSpreadsheet', versionId);
+  if (res.ok) {
+    alert('出力が完了しました。新しいタブで開きます。');
+    window.open(res.data.url, '_blank');
+  } else {
+    alert('エラー: ' + res.message);
+  }
+  btn.disabled = false;
+  showStatus('');
+}
+</script>

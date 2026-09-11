@@ -11,8 +11,10 @@ function doGet(e) {
 }
 
 // 共通：シートデータをオブジェクト配列として取得
-function getTableData_(sheetName) {
-  const ss = SpreadsheetApp.openById(PropertiesService.getScriptProperties().getProperty('SPREADSHEET_ID'));
+function getTableData_(sheetName, ss) {
+  if (!ss) {
+    ss = SpreadsheetApp.openById(PropertiesService.getScriptProperties().getProperty('SPREADSHEET_ID'));
+  }
   const sheet = ss.getSheetByName(sheetName);
   if (!sheet) return [];
   const data = sheet.getDataRange().getValues();
@@ -31,9 +33,10 @@ function getTableData_(sheetName) {
 // クライアントへ初期データを送る
 function getAppData() {
   try {
+    const ss = SpreadsheetApp.openById(PropertiesService.getScriptProperties().getProperty('SPREADSHEET_ID'));
     const currentProductId = PropertiesService.getUserProperties().getProperty('CURRENT_PRODUCT_ID') || 'P-001';
     
-    const allProducts = getTableData_(SHEET_NAMES.PRODUCT);
+    const allProducts = getTableData_(SHEET_NAMES.PRODUCT, ss);
     let currentProduct = allProducts.find(p => p['製品ID'] === currentProductId);
     
     if (!currentProduct && allProducts.length > 0) {
@@ -42,20 +45,25 @@ function getAppData() {
     }
 
     // 製品に紐づくデータだけフィルタ
-    const works = getTableData_(SHEET_NAMES.WORK).filter(w => w['製品ID'] === currentProduct['製品ID']);
+    const works = getTableData_(SHEET_NAMES.WORK, ss).filter(w => w['製品ID'] === currentProduct['製品ID']);
     const workIds = works.map(w => w['作業ID']);
-    const details = getTableData_(SHEET_NAMES.WORK_DETAIL).filter(d => workIds.includes(d['作業ID']));
+    const details = getTableData_(SHEET_NAMES.WORK_DETAIL, ss).filter(d => workIds.includes(d['作業ID']));
+    const detailIds = details.map(d => d['内訳ID']);
 
     const data = {
       product: currentProduct,
       allProducts: allProducts, // プルダウン用
-      params: getTableData_(SHEET_NAMES.PARAM).filter(p => p['製品ID'] === currentProduct['製品ID']),
-      processes: getTableData_(SHEET_NAMES.PROCESS), // マスタは全製品共通
-      groups: getTableData_(SHEET_NAMES.GROUP),      // マスタは全製品共通
-      equipment: getTableData_(SHEET_NAMES.EQUIPMENT), // マスタは全製品共通
+      params: getTableData_(SHEET_NAMES.PARAM, ss).filter(p => p['製品ID'] === currentProduct['製品ID']),
+      processes: getTableData_(SHEET_NAMES.PROCESS, ss), // マスタは全製品共通
+      groups: getTableData_(SHEET_NAMES.GROUP, ss),      // マスタは全製品共通
+      equipment: getTableData_(SHEET_NAMES.EQUIPMENT, ss), // マスタは全製品共通
       works: works,
       details: details,
-      choices: getTableData_(SHEET_NAMES.CHOICE)
+      choices: getTableData_(SHEET_NAMES.CHOICE, ss),
+      parts: getTableData_(SHEET_NAMES.PART, ss),
+      productParts: getTableData_(SHEET_NAMES.PRODUCT_PART, ss).filter(p => p['製品ID'] === currentProduct['製品ID']),
+      partUsages: getTableData_(SHEET_NAMES.PART_USAGE, ss),
+      versions: getTableData_(SHEET_NAMES.VERSION, ss).filter(v => v['製品ID'] === currentProduct['製品ID'])
     };
     return JSON.stringify({ ok: true, data: data });
   } catch (e) {
@@ -577,45 +585,6 @@ function cloneProduct(newProductCode, newProductName) {
 }
 
 // ----------------------------------------------------
-// データの取得を「現在選択中の製品」に絞り込む対応
-// ----------------------------------------------------
-// 元の getAppData 関数を置き換えて、現在選択中の製品IDに紐づくデータだけを返すように変更
-
-function getAppData() {
-  try {
-    const currentProductId = PropertiesService.getUserProperties().getProperty('CURRENT_PRODUCT_ID') || 'P-001';
-    
-    const allProducts = getTableData_(SHEET_NAMES.PRODUCT);
-    let currentProduct = allProducts.find(p => p['製品ID'] === currentProductId);
-    
-    if (!currentProduct && allProducts.length > 0) {
-      currentProduct = allProducts[0];
-      PropertiesService.getUserProperties().setProperty('CURRENT_PRODUCT_ID', currentProduct['製品ID']);
-    }
-
-    // 製品に紐づくデータだけフィルタ
-    const works = getTableData_(SHEET_NAMES.WORK).filter(w => w['製品ID'] === currentProduct['製品ID']);
-    const workIds = works.map(w => w['作業ID']);
-    const details = getTableData_(SHEET_NAMES.WORK_DETAIL).filter(d => workIds.includes(d['作業ID']));
-
-    const data = {
-      product: currentProduct,
-      allProducts: allProducts, // プルダウン用
-      params: getTableData_(SHEET_NAMES.PARAM).filter(p => p['製品ID'] === currentProduct['製品ID']),
-      processes: getTableData_(SHEET_NAMES.PROCESS), // マスタは全製品共通
-      groups: getTableData_(SHEET_NAMES.GROUP),      // マスタは全製品共通
-      equipment: getTableData_(SHEET_NAMES.EQUIPMENT), // マスタは全製品共通
-      works: works,
-      details: details,
-      choices: getTableData_(SHEET_NAMES.CHOICE)
-    };
-    return JSON.stringify({ ok: true, data: data });
-  } catch (e) {
-    return JSON.stringify({ ok: false, message: e.toString() });
-  }
-}
-
-// ----------------------------------------------------
 // 組立ブロック（作業）の管理 (S01 / F70, F02)
 // ----------------------------------------------------
 
@@ -769,5 +738,396 @@ function reorderAllBlocks() {
     return { ok: false, message: e.toString() };
   } finally {
     lock.releaseLock();
+  }
+}
+
+function getRecords(detailId) {
+  try {
+    const records = getTableData_(SHEET_NAMES.RECORD).filter(r => r['内訳ID'] === detailId);
+    return { ok: true, data: records };
+  } catch (e) {
+    return { ok: false, message: e.toString() };
+  }
+}
+
+function saveRecordData(newRow) {
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(10000);
+    const ss = SpreadsheetApp.openById(PropertiesService.getScriptProperties().getProperty('SPREADSHEET_ID'));
+    const sheet = ss.getSheetByName(SHEET_NAMES.RECORD);
+    const data = sheet.getDataRange().getValues();
+    const headers = data[0];
+    const idIndex = headers.indexOf('観測ID');
+    
+    const now = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd HH:mm:ss');
+    const user = Session.getActiveUser().getEmail();
+    
+    let rowIndex = -1;
+    if (newRow['観測ID']) {
+      for (let i = 1; i < data.length; i++) {
+        if (data[i][idIndex] === newRow['観測ID']) {
+          rowIndex = i;
+          break;
+        }
+      }
+    }
+
+    if (rowIndex === -1) {
+      // 追加
+      newRow['観測ID'] = 'O-' + (data.length + 1000).toString() + Date.now().toString().slice(-4);
+      const appendData = headers.map(h => {
+        if (h === '作成日時' || h === '更新日時') return now;
+        if (h === '作成者' || h === '更新者') return user;
+        return newRow[h] !== undefined ? newRow[h] : '';
+      });
+      sheet.appendRow(appendData);
+      return { ok: true, message: '追加しました', data: { row: newRow } };
+    } else {
+      // 更新
+      const currentRow = data[rowIndex];
+      headers.forEach((h, colIndex) => {
+        if (['作成日時', '作成者', '更新日時', '更新者', '観測ID', '内訳ID'].includes(h)) return;
+        if (newRow[h] !== undefined) {
+          currentRow[colIndex] = newRow[h];
+        }
+      });
+      currentRow[headers.indexOf('更新日時')] = now;
+      currentRow[headers.indexOf('更新者')] = user;
+      sheet.getRange(rowIndex + 1, 1, 1, headers.length).setValues([currentRow]);
+      return { ok: true, message: '保存しました', data: { row: newRow } };
+    }
+  } catch (e) {
+    return { ok: false, message: e.toString() };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+
+/**
+ * 品番の正規化（03_データ構造 4.12）：前後空白除去・全角英数記号→半角・英字大文字化
+ */
+/** SHEET_NAMES/HEADERS のキーでシートを取得し、無ければヘッダ行付きで作成する */
+function getOrCreateSheet_(ss, key) {
+  const name = SHEET_NAMES[key];
+  let sheet = ss.getSheetByName(name);
+  if (!sheet) {
+    sheet = ss.insertSheet(name);
+    const headers = HEADERS[key];
+    sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+    sheet.setFrozenRows(1);
+  }
+  return sheet;
+}
+
+function normalizePartNo_(v) {
+  if (v === null || v === undefined) return '';
+  let s = String(v).replace(/[\u3000\s]+/g, ' ').trim();
+  // 全角英数・記号（U+FF01〜U+FF5E）→ 半角
+  s = s.replace(/[\uFF01-\uFF5E]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0xFEE0));
+  return s.toUpperCase();
+}
+
+/**
+ * 部品表（BOM）CSV の取込。
+ * 形式：ヘッダあり／A:製品型番 B:部品品番 C:部品名。引用符内のカンマ・改行に対応。
+ * 現在の製品の CSV型番 と一致する行だけを製品部品に登録する（CSV型番 が未設定なら全行）。
+ */
+function importPartsCSV(csvText) {
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(30000); // 30秒
+    const ss = SpreadsheetApp.openById(PropertiesService.getScriptProperties().getProperty('SPREADSHEET_ID'));
+    // 部品系シートは後から追加された定義のため、無ければヘッダ付きで自動作成する
+    const partSheet = getOrCreateSheet_(ss, 'PART');
+    const prodPartSheet = getOrCreateSheet_(ss, 'PRODUCT_PART');
+    getOrCreateSheet_(ss, 'PART_USAGE');
+    const productSheet = ss.getSheetByName(SHEET_NAMES.PRODUCT);
+
+    // BOM（U+FEFF）除去のうえ、引用符を考慮して解析する
+    const text = String(csvText || '').replace(/^\uFEFF/, '');
+    if (text.trim() === '') return { ok: false, message: 'データがありません' };
+
+    let rows;
+    try {
+      rows = Utilities.parseCsv(text);
+    } catch (e) {
+      return { ok: false, message: 'CSVの解析に失敗しました（引用符の対応が崩れている可能性があります）: ' + e.message };
+    }
+    rows = rows.filter(r => r.join('').trim() !== '');
+    if (rows.length === 0) return { ok: false, message: 'データがありません' };
+
+    // 1行目がヘッダなら飛ばす（品番らしい値なら data として扱う）
+    const firstCell = String(rows[0][0] || '');
+    const startRow = /製品型番|型番|製品/.test(firstCell) ? 1 : 0;
+    if (rows.length <= startRow) return { ok: false, message: 'データがありません' };
+
+    const currentProductId = PropertiesService.getUserProperties().getProperty('CURRENT_PRODUCT_ID') || 'P-001';
+    const now = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd HH:mm:ss');
+    const user = Session.getActiveUser().getEmail();
+
+    // 現在の製品の CSV型番（未設定なら型番での絞り込みをしない）
+    let csvTypeCode = '';
+    if (productSheet) {
+      const prodData = productSheet.getDataRange().getValues();
+      const prodHeaders = prodData[0];
+      const idIdx = prodHeaders.indexOf('製品ID');
+      const csvIdx = prodHeaders.indexOf('CSV型番');
+      for (let i = 1; i < prodData.length; i++) {
+        if (prodData[i][idIdx] === currentProductId) {
+          csvTypeCode = normalizePartNo_(csvIdx >= 0 ? prodData[i][csvIdx] : '');
+          break;
+        }
+      }
+    }
+
+    // 既存部品の取得
+    const partData = partSheet.getDataRange().getValues();
+    const partHeaders = partData[0];
+    const pnIdx = partHeaders.indexOf('品番');
+    const pnameIdx = partHeaders.indexOf('品名');
+    const partMap = {}; // { 品番: rowIndex }
+    for (let i = 1; i < partData.length; i++) {
+      const pn = normalizePartNo_(partData[i][pnIdx]);
+      if (pn) partMap[pn] = i;
+    }
+
+    // 既存製品部品の取得（現在の製品に紐づくもののみ）
+    const prodPartData = prodPartSheet.getDataRange().getValues();
+    const ppHeaders = prodPartData[0];
+    const ppSeen = {};
+    for (let i = 1; i < prodPartData.length; i++) {
+      if (prodPartData[i][ppHeaders.indexOf('製品ID')] === currentProductId) {
+        ppSeen[normalizePartNo_(prodPartData[i][ppHeaders.indexOf('品番')])] = true;
+      }
+    }
+
+    let addedCount = 0;     // 部品マスタへの新規追加
+    let updatedCount = 0;   // 品名の更新
+    let linkedCount = 0;    // 製品部品への新規紐付け
+    let skippedCount = 0;   // 型番違いで対象外
+    let dupCount = 0;       // CSV内の重複行
+    const appendParts = [];
+    const appendProdParts = [];
+    const nameUpdates = []; // { row, name }
+    const seenInCsv = {};
+
+    for (let i = startRow; i < rows.length; i++) {
+      const cols = rows[i];
+      if (!cols || cols.length < 2) continue;
+
+      const typeCode = normalizePartNo_(cols[0]);
+      const normPartNo = normalizePartNo_(cols[1]);
+      const partName = String(cols[2] === undefined ? '' : cols[2]).trim();
+      if (!normPartNo) continue;
+
+      // 現在の製品の CSV型番 と一致する行のみ取り込む
+      if (csvTypeCode && typeCode && typeCode !== csvTypeCode) {
+        skippedCount++;
+        continue;
+      }
+
+      if (seenInCsv[normPartNo]) { dupCount++; continue; }
+      seenInCsv[normPartNo] = true;
+
+      // 部品マスタの更新・追加
+      if (partMap[normPartNo] !== undefined) {
+        const rIdx = partMap[normPartNo];
+        if (partName && String(partData[rIdx][pnameIdx]) !== partName) {
+          partData[rIdx][pnameIdx] = partName;
+          nameUpdates.push({ row: rIdx + 1, name: partName });
+          updatedCount++;
+        }
+      } else {
+        const newRow = Array(partHeaders.length).fill('');
+        newRow[pnIdx] = normPartNo;
+        newRow[pnameIdx] = partName;
+        newRow[partHeaders.indexOf('状態')] = '有効';
+        newRow[partHeaders.indexOf('作成日時')] = now;
+        newRow[partHeaders.indexOf('作成者')] = user;
+        appendParts.push(newRow);
+        addedCount++;
+      }
+
+      // 製品部品（簡易BOM）の追加
+      if (!ppSeen[normPartNo]) {
+        const newRow = Array(ppHeaders.length).fill('');
+        newRow[ppHeaders.indexOf('製品ID')] = currentProductId;
+        newRow[ppHeaders.indexOf('品番')] = normPartNo;
+        newRow[ppHeaders.indexOf('状態')] = '有効';
+        newRow[ppHeaders.indexOf('取込日')] = now;
+        newRow[ppHeaders.indexOf('作成日時')] = now;
+        newRow[ppHeaders.indexOf('作成者')] = user;
+        appendProdParts.push(newRow);
+        ppSeen[normPartNo] = true;
+        linkedCount++;
+      }
+    }
+
+    if (addedCount === 0 && updatedCount === 0 && linkedCount === 0 && skippedCount > 0) {
+      return { ok: false, message: 'CSVの製品型番が現在の製品のCSV型番（' + csvTypeCode + '）と一致しません。製品を切り替えるか、製品マスタのCSV型番を確認してください。' };
+    }
+
+    nameUpdates.forEach(u => {
+      partSheet.getRange(u.row, pnameIdx + 1).setValue(u.name);
+      if (partHeaders.indexOf('更新日時') >= 0) partSheet.getRange(u.row, partHeaders.indexOf('更新日時') + 1).setValue(now);
+      if (partHeaders.indexOf('更新者') >= 0) partSheet.getRange(u.row, partHeaders.indexOf('更新者') + 1).setValue(user);
+    });
+    if (appendParts.length > 0) {
+      partSheet.getRange(partSheet.getLastRow() + 1, 1, appendParts.length, partHeaders.length).setValues(appendParts);
+    }
+    if (appendProdParts.length > 0) {
+      prodPartSheet.getRange(prodPartSheet.getLastRow() + 1, 1, appendProdParts.length, ppHeaders.length).setValues(appendProdParts);
+    }
+
+    // CSVになかった製品部品は自動無効化しない（履歴が壊れるため）
+
+    return { ok: true, data: { added: addedCount, updated: updatedCount, linked: linkedCount, skipped: skippedCount, duplicated: dupCount } };
+  } catch (e) {
+    return { ok: false, message: e.toString() };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function savePartMaster(newRow) {
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(10000);
+    const ss = SpreadsheetApp.openById(PropertiesService.getScriptProperties().getProperty('SPREADSHEET_ID'));
+    const sheet = ss.getSheetByName(SHEET_NAMES.PART);
+    const data = sheet.getDataRange().getValues();
+    const headers = data[0];
+    
+    const now = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd HH:mm:ss');
+    const user = Session.getActiveUser().getEmail();
+    
+    for (let i = 1; i < data.length; i++) {
+      if (data[i][headers.indexOf('品番')] === newRow['品番']) {
+        const currentRow = data[i];
+        ['部品区分', '入数', '荷姿', '置場', '搬入条件'].forEach(col => {
+          currentRow[headers.indexOf(col)] = newRow[col];
+        });
+        currentRow[headers.indexOf('更新日時')] = now;
+        currentRow[headers.indexOf('更新者')] = user;
+        sheet.getRange(i + 1, 1, 1, headers.length).setValues([currentRow]);
+        return { ok: true, message: '保存しました' };
+      }
+    }
+    return { ok: false, message: '部品が見つかりません' };
+  } catch (e) {
+    return { ok: false, message: e.toString() };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function generateKitData(targetQty, axis) {
+  try {
+    const currentProductId = PropertiesService.getUserProperties().getProperty('CURRENT_PRODUCT_ID') || 'P-001';
+    
+    // 必要なデータを取得
+    const details = getTableData_(SHEET_NAMES.WORK_DETAIL).filter(d => d['状態'] !== '無効');
+    const works = getTableData_(SHEET_NAMES.WORK).filter(w => w['製品ID'] === currentProductId && w['状態'] !== '無効');
+    const parts = getTableData_(SHEET_NAMES.PART);
+    const usages = getTableData_(SHEET_NAMES.PART_USAGE);
+    const processes = getTableData_(SHEET_NAMES.PROCESS);
+    
+    // 有効な小工程IDリスト
+    const workIds = works.map(w => w['作業ID']);
+    const activeDetails = details.filter(d => workIds.includes(d['作業ID']));
+    const activeDetailIds = activeDetails.map(d => d['内訳ID']);
+    
+    // 対象の部品使用リスト
+    const activeUsages = usages.filter(u => activeDetailIds.includes(u['内訳ID']));
+    
+    // マッピング
+    const partMap = {};
+    parts.forEach(p => partMap[p['品番']] = p);
+    
+    const workMap = {};
+    works.forEach(w => workMap[w['作業ID']] = w);
+    
+    const detailMap = {};
+    activeDetails.forEach(d => detailMap[d['内訳ID']] = d);
+    
+    const processMap = {};
+    processes.forEach(p => processMap[p['工程ID']] = p['工程名']);
+
+    // 集計
+    const results = [];
+    
+    activeUsages.forEach(usage => {
+      const detail = detailMap[usage['内訳ID']];
+      const work = workMap[detail['作業ID']];
+      const part = partMap[usage['品番']];
+      
+      if (!part || !detail || !work) return;
+      
+      // 軸に応じたグループ名
+      let groupName = '未分類';
+      if (axis === '大工程別') {
+         groupName = processMap[work['工程ID']] || work['大工程'] || '未分類';
+      } else if (axis === '組立ブロック別') {
+         groupName = work['作業名'] || '未分類';
+      } else if (axis === '中工程別') {
+         groupName = work['作業名'] || '未分類'; // 今回は2階層なのでブロック名と同義
+      }
+      
+      const unitQty = Number(usage['使用数']) || 0;
+      if (unitQty <= 0) return;
+      
+      const totalQty = unitQty * targetQty;
+      const packageQty = Number(part['入数']) || 0;
+      
+      let boxes = 0;
+      let remainder = totalQty;
+      if (packageQty > 0) {
+         boxes = Math.floor(totalQty / packageQty);
+         remainder = totalQty % packageQty;
+      }
+      
+      // 同じグループ・同じ品番があれば合算（中工程別などの要件次第だが、基本は合算）
+      const existing = results.find(r => r.groupName === groupName && r['品番'] === part['品番']);
+      if (existing) {
+         existing.unitQty += unitQty;
+         existing.totalQty += totalQty;
+         if (packageQty > 0) {
+            existing.boxes = Math.floor(existing.totalQty / packageQty);
+            existing.remainder = existing.totalQty % packageQty;
+         } else {
+            existing.remainder = existing.totalQty;
+         }
+      } else {
+         results.push({
+           groupName: groupName,
+           '品番': part['品番'],
+           '品名': part['品名'],
+           '部品区分': part['部品区分'],
+           unitQty: unitQty,
+           totalQty: totalQty,
+           '入数': packageQty,
+           boxes: boxes,
+           remainder: remainder,
+           '荷姿': part['荷姿'] || '',
+           '置場': part['置場'] || ''
+         });
+      }
+    });
+    
+    // 並び替え (グループ名 -> 品番)
+    results.sort((a, b) => {
+      if (a.groupName < b.groupName) return -1;
+      if (a.groupName > b.groupName) return 1;
+      if (a['品番'] < b['品番']) return -1;
+      if (a['品番'] > b['品番']) return 1;
+      return 0;
+    });
+    
+    return { ok: true, data: results };
+    
+  } catch(e) {
+    return { ok: false, message: e.toString() };
   }
 }
